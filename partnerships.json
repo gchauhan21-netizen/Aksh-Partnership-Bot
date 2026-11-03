@@ -1,0 +1,38 @@
+{
+  "nextPartnership": 4,
+  "partnerships": [
+    {
+      "id": "#001",
+      "serverName": "7",
+      "serverLink": "https://discord.gg/6SgnZxQtD",
+      "representative1": "1381885868830363651",
+      "representative2": null,
+      "paidAdPing": false,
+      "createdBy": "1510211889127227444",
+      "announcementMessageID": "1566760783222669373",
+      "timestamp": "2026-11-02T10:28:07.251Z"
+    },
+    {
+      "id": "#002",
+      "serverName": "67",
+      "serverLink": "https://discord.gg/6SgnZxQtD",
+      "representative1": "1510211889127227444",
+      "representative2": null,
+      "paidAdPing": false,
+      "createdBy": "1510211889127227444",
+      "announcementMessageID": "1566761517356027906",
+      "timestamp": "2026-11-02T10:31:03.704Z"
+    },
+    {
+      "id": "#003",
+      "serverName": "34",
+      "serverLink": "https://discord.gg/fCgRdjCxC",
+      "representative1": "1173444104684847116",
+      "representative2": null,
+      "paidAdPing": false,
+      "createdBy": "1510211889127227444",
+      "announcementMessageID": "1566762757389291570",
+      "timestamp": "2026-11-02T10:35:58.946Z"
+    }
+  ]
+}
