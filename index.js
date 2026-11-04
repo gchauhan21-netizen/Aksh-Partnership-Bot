@@ -56,6 +56,7 @@ const MOD_LOG_CHANNEL_ID =
 // ======================================================
 
 const STAFF_ROLE_ID = "1557375177543778404";
+const PARTNERSHIP_REP_ROLE_ID = "1557801601505304657";
 
 const OWNER_ROLE_ID = "1561367764071878737";
 const ADMIN_ROLE_ID = "1561367792253669386";
@@ -1615,8 +1616,10 @@ async function sendPartnershipLog(
     guild,
     user,
     serverName,
+    serverAd,
     serverLink,
-    representative
+    representatives,
+    paidAdPing
 ) {
     const channel =
         await client.channels.fetch(
@@ -1624,6 +1627,10 @@ async function sendPartnershipLog(
         ).catch(() => null);
 
     if (!channel?.isTextBased()) return;
+
+    const repText = representatives.length
+        ? representatives.map(member => `${member}`).join("\n")
+        : "Not provided";
 
     const embed = new EmbedBuilder()
         .setColor(0x2B2D31)
@@ -1635,19 +1642,28 @@ async function sendPartnershipLog(
                 inline: true
             },
             {
-                name: "👤 Representative",
-                value: safeText(representative),
+                name: "📢 Server Advertisement",
+                value: safeText(serverAd, 1024),
+                inline: false
+            },
+            {
+                name: "👤 Representatives",
+                value: repText,
                 inline: true
             },
             {
                 name: "🔗 Invite",
-                value: serverLink,
+                value: safeText(serverLink, 500),
                 inline: false
             },
             {
+                name: "💰 Paid Ad Ping",
+                value: paidAdPing ? "Enabled" : "Disabled",
+                inline: true
+            },
+            {
                 name: "🤝 Submitted By",
-                value:
-                    `${user} (\`${user.id}\`)`,
+                value: `${user} (\`${user.id}\`)`,
                 inline: false
             }
         )
@@ -1657,7 +1673,8 @@ async function sendPartnershipLog(
         .setTimestamp();
 
     await channel.send({
-        embeds: [embed]
+        embeds: [embed],
+        allowedMentions: { parse: [] }
     });
 }
 
@@ -1678,19 +1695,24 @@ async function createPartnership(interaction) {
         flags: MessageFlags.Ephemeral
     });
 
-    const serverName =
-        interaction.options.getString("server_name");
-
-    const serverLink =
-        interaction.options.getString("server_link");
-
-    const representative =
-        interaction.options.getString("representative_1");
+    const serverName = safeText(
+        interaction.options.getString("server_name"), 100
+    );
+    const serverAd = safeText(
+        interaction.options.getString("server_ad"), 1024
+    );
+    const serverLink = safeText(
+        interaction.options.getString("server_link"), 500
+    );
+    const representative1 =
+        interaction.options.getUser("representative_1");
+    const representative2 =
+        interaction.options.getUser("representative_2");
+    const paidAdPing =
+        interaction.options.getBoolean("paid_ad_ping") ?? false;
 
     if (
-        !/^https?:\/\/(www\.)?discord\.gg\//i.test(
-            serverLink
-        )
+        !/^https?:\/\/(www\.)?discord\.gg\//i.test(serverLink)
     ) {
         return interaction.editReply({
             content:
@@ -1710,13 +1732,54 @@ async function createPartnership(interaction) {
         });
     }
 
+    const representativeIds = [...new Set(
+        [representative1?.id, representative2?.id].filter(Boolean)
+    )];
+    const representatives = [];
+    const roleFailures = [];
+
+    for (const userId of representativeIds) {
+        try {
+            const member = await interaction.guild.members.fetch(userId);
+            representatives.push(member);
+
+            const role = interaction.guild.roles.cache.get(
+                PARTNERSHIP_REP_ROLE_ID
+            );
+
+            if (!role) {
+                roleFailures.push(`${member.user.tag}: representative role not found`);
+                continue;
+            }
+
+            if (
+                interaction.guild.members.me.roles.highest.comparePositionTo(role) <= 0
+            ) {
+                roleFailures.push(`${member.user.tag}: bot role is below the representative role`);
+                continue;
+            }
+
+            if (!member.roles.cache.has(PARTNERSHIP_REP_ROLE_ID)) {
+                await member.roles.add(
+                    PARTNERSHIP_REP_ROLE_ID,
+                    "Added as a partnership representative"
+                );
+            }
+        } catch (error) {
+            console.error(`Could not assign partnership rep role to ${userId}:`, error);
+            roleFailures.push(`${userId}: role assignment failed`);
+        }
+    }
+
+    const representativeMentions = representatives.length
+        ? representatives.map(member => `${member}`).join(", ")
+        : "Not provided";
+
     const embed = new EmbedBuilder()
         .setColor(0x5865F2)
         .setAuthor({
-            name:
-                "Aksh's Advertising • Official Partnership",
-            iconURL:
-                client.user.displayAvatarURL()
+            name: "Aksh's Advertising • Official Partnership",
+            iconURL: client.user.displayAvatarURL()
         })
         .setTitle("🤝 NEW PARTNERSHIP")
         .setDescription(
@@ -1725,11 +1788,13 @@ async function createPartnership(interaction) {
             "━━━━━━━━━━━━━━━━━━━━\n\n" +
             "### 🌐 Partner Information\n\n" +
             `**Server:** ${serverName}\n` +
-            `**Representative:** ${representative}\n\n` +
+            `**Representatives:** ${representativeMentions}\n\n` +
             "### 🔗 Server Invite\n\n" +
             `[**Join the Partner Server**](${serverLink})\n\n` +
             "━━━━━━━━━━━━━━━━━━━━\n\n" +
-            "### 🤝 Partnership\n\n" +
+            "### 📢 Server Advertisement\n\n" +
+            serverAd + "\n\n" +
+            "━━━━━━━━━━━━━━━━━━━━\n\n" +
             "We appreciate the opportunity to work together and look forward to a successful partnership."
         )
         .addFields(
@@ -1739,8 +1804,8 @@ async function createPartnership(interaction) {
                 inline: true
             },
             {
-                name: "👤 Representative",
-                value: representative,
+                name: "👤 Representatives",
+                value: representativeMentions,
                 inline: true
             },
             {
@@ -1749,34 +1814,47 @@ async function createPartnership(interaction) {
                 inline: true
             }
         )
-        .setThumbnail(
-            client.user.displayAvatarURL()
-        )
+        .setThumbnail(client.user.displayAvatarURL())
         .setFooter({
-            text:
-                "Aksh's Advertising • Partnership Department"
+            text: "Aksh's Advertising • Partnership Department"
         })
         .setTimestamp();
 
+    const announcementContent = paidAdPing
+        ? `🤝 **NEW PARTNERSHIP** <@&1557974795067457606>`
+        : "🤝 **NEW PARTNERSHIP**";
+
     await channel.send({
-        content: "🤝 **NEW PARTNERSHIP**",
-        embeds: [embed]
+        content: announcementContent,
+        embeds: [embed],
+        allowedMentions: {
+            roles: paidAdPing ? ["1557974795067457606"] : [],
+            users: [],
+            parse: []
+        }
     });
 
     await sendPartnershipLog(
         interaction.guild,
         interaction.user,
         serverName,
+        serverAd,
         serverLink,
-        representative
+        representatives,
+        paidAdPing
     );
+
+    const failureText = roleFailures.length
+        ? `\n\n⚠️ Some representative roles could not be assigned:\n${roleFailures.join("\n")}`
+        : "";
 
     await interaction.editReply({
         content:
             `✅ **Partnership created successfully!**\n\n` +
             `**Server:** ${serverName}\n` +
-            `**Representative:** ${representative}\n` +
-            `**Announcement:** <#${PARTNERSHIP_CHANNEL_ID}>`
+            `**Representatives:** ${representativeMentions}\n` +
+            `**Announcement:** <#${PARTNERSHIP_CHANNEL_ID}>` +
+            failureText
     });
 }
 
@@ -3868,26 +3946,46 @@ const commands = [];
 commands.push(
     new SlashCommandBuilder()
         .setName("partnership")
-        .setDescription(
-            "Create a partnership announcement"
-        )
+        .setDescription("Create a partnership announcement")
         .addStringOption(option =>
             option
                 .setName("server_name")
                 .setDescription("Partner server name")
                 .setRequired(true)
+                .setMaxLength(100)
+        )
+        .addStringOption(option =>
+            option
+                .setName("server_ad")
+                .setDescription("The partner server advertisement")
+                .setRequired(true)
+                .setMaxLength(1024)
         )
         .addStringOption(option =>
             option
                 .setName("server_link")
                 .setDescription("Discord invite")
                 .setRequired(true)
+                .setMaxLength(500)
         )
-        .addStringOption(option =>
+        .addUserOption(option =>
             option
                 .setName("representative_1")
-                .setDescription("Representative")
+                .setDescription("First partnership representative")
                 .setRequired(true)
+        )
+        // server_ad is the single advertisement field; no duplicate ad option.
+        .addUserOption(option =>
+            option
+                .setName("representative_2")
+                .setDescription("Second partnership representative (optional)")
+                .setRequired(false)
+        )
+        .addBooleanOption(option =>
+            option
+                .setName("paid_ad_ping")
+                .setDescription("Ping the paid ads role")
+                .setRequired(false)
         )
 );
 
@@ -4320,11 +4418,13 @@ async function registerCommands() {
         console.log(
             `✅ Registered ${commands.length} slash commands.`
         );
+        return true;
     } catch (error) {
         console.error(
             "❌ Command registration failed:",
-            error
+            error?.rawError || error
         );
+        return false;
     }
 }
 
@@ -4349,7 +4449,13 @@ client.once(
             `Logged in as ${client.user.tag}`
         );
 
-        await registerCommands();
+        const commandsRegistered = await registerCommands();
+
+        if (!commandsRegistered) {
+            console.error(
+                "⚠️ The bot is online, but slash commands were NOT registered. Check the error above."
+            );
+        }
 
         const guild =
             client.guilds.cache.get(
@@ -4407,7 +4513,11 @@ client.once(
         console.log(
             "=========================================="
         );
-        console.log("READY");
+        console.log(
+            commandsRegistered
+                ? "READY — commands registered"
+                : "ONLINE — slash commands need fixing"
+        );
         console.log(
             "=========================================="
         );
