@@ -80,6 +80,21 @@ const SHR_ROLE_IDS = [
 
 const VERIFICATION_ROLE_ID = "1566308232119722025";
 
+// Dedicated permissions for staff promotions and infractions
+const PROMOTER_PERMISSION_ROLE_ID = "1558093184905642088";
+const INFRACTOR_PERMISSION_ROLE_ID = "1558093322378027049";
+
+// Progressive staff infraction roles
+const INFRACTION_ROLE_IDS = {
+    suspended: "1557975460900765696",
+    verbal_warning: "1557975348396691538",
+    warning_1: "1557975139096985600",
+    warning_2: "1557975209506644068",
+    strike_1: "1557375006449733743",
+    strike_2: "1557375052188745759",
+    strike_3: "1557375117904846878"
+};
+
 const GIVEAWAY_HOST_ROLE_ID = "1567115692430331954";
 
 const APPLICATION_REVIEWERS = {
@@ -2411,13 +2426,86 @@ async function logInfraction(
 }
 
 // ======================================================
+// INFRACTION ROLE PROGRESSION
+// ======================================================
+
+async function applyInfractionRole(target, type, history) {
+    const guild = target.guild;
+    let roleId = null;
+    let family = null;
+
+    if (type === "verbal_warning") {
+        roleId = INFRACTION_ROLE_IDS.verbal_warning;
+        family = [INFRACTION_ROLE_IDS.verbal_warning];
+    } else if (type === "warning") {
+        const count = history.filter(entry => entry.type === "warning").length;
+        roleId = count >= 2
+            ? INFRACTION_ROLE_IDS.warning_2
+            : INFRACTION_ROLE_IDS.warning_1;
+        family = [INFRACTION_ROLE_IDS.warning_1, INFRACTION_ROLE_IDS.warning_2];
+    } else if (type === "strike") {
+        const count = history.filter(entry => entry.type === "strike").length;
+        roleId = count >= 3
+            ? INFRACTION_ROLE_IDS.strike_3
+            : count === 2
+                ? INFRACTION_ROLE_IDS.strike_2
+                : INFRACTION_ROLE_IDS.strike_1;
+        family = [
+            INFRACTION_ROLE_IDS.strike_1,
+            INFRACTION_ROLE_IDS.strike_2,
+            INFRACTION_ROLE_IDS.strike_3
+        ];
+    } else if (type === "suspended") {
+        roleId = INFRACTION_ROLE_IDS.suspended;
+        family = [INFRACTION_ROLE_IDS.suspended];
+    }
+
+    if (!roleId) return null;
+
+    const role = guild.roles.cache.get(roleId);
+    if (!role) throw new Error(`Configured infraction role ${roleId} was not found.`);
+    if (role.position >= guild.members.me.roles.highest.position) {
+        throw new Error(`Move the bot role above infraction role ${role.name}.`);
+    }
+
+    for (const oldRoleId of family) {
+        if (oldRoleId !== roleId && target.roles.cache.has(oldRoleId)) {
+            await target.roles.remove(oldRoleId, "Updating progressive staff infraction role");
+        }
+    }
+
+    if (!target.roles.cache.has(roleId)) {
+        await target.roles.add(role, "Staff infraction progression");
+    }
+
+    return role;
+}
+
+async function recordInfraction(target, moderator, reason, type) {
+    const entry = addInfraction(target.id, moderator.id, reason, type);
+    const history = infractions.users[target.id] || [];
+
+    if (["verbal_warning", "warning", "strike", "suspended"].includes(type)) {
+        await applyInfractionRole(target, type, history);
+    }
+
+    await logInfraction(target, moderator, reason, type);
+    await target.send(
+        `⚠️ You received a **${type.replaceAll("_", " ")}** in **${target.guild.name}**.\nReason: ${reason}`
+    ).catch(() => { });
+    return entry;
+}
+
+// ======================================================
 // PROMOTE
 // ======================================================
 
 async function promoteMember(interaction) {
-    if (!isStaff(interaction.member)) {
+    const actor = await interaction.guild.members.fetch(interaction.user.id);
+
+    if (!actor.roles.cache.has(PROMOTER_PERMISSION_ROLE_ID)) {
         return interaction.reply({
-            content: "❌ Staff only.",
+            content: "❌ You do not have permission to promote staff. You need the designated Promoter permission role.",
             flags: MessageFlags.Ephemeral
         });
     }
@@ -2447,13 +2535,37 @@ async function promoteMember(interaction) {
         });
     }
 
-    if (!canModerate(
-        interaction.member,
-        target
-    )) {
+    // A promoter may only assign a staff rank below their own highest role.
+    if (role.position >= actor.roles.highest.position) {
+        const autoReason = `Automatic warning: attempted to promote ${target.user.tag} to ${role.name}, which is equal to or above the promoter's own highest role.`;
+        try {
+            await recordInfraction(
+                actor,
+                client.user,
+                autoReason,
+                "warning"
+            );
+        } catch (error) {
+            console.error("Failed to apply automatic promotion infraction:", error);
+            // recordInfraction saves the case before attempting role assignment.
+            // Do not create a duplicate case if the role update fails.
+            await logInfraction(actor, client.user, autoReason, "warning").catch(() => { });
+        }
+
         return interaction.reply({
-            content:
-                "❌ You cannot promote this member.",
+            content: `❌ Promotion denied. You cannot assign **${role.name}** because it is equal to or higher than your own highest role. An automatic warning has been recorded.`,
+            flags: MessageFlags.Ephemeral
+        });
+    }
+
+    if (
+        target.id === actor.id ||
+        target.id === interaction.guild.ownerId ||
+        target.id === client.user.id ||
+        actor.roles.highest.comparePositionTo(target.roles.highest) <= 0
+    ) {
+        return interaction.reply({
+            content: "❌ You cannot promote this member because they are equal to or above your current rank, or are otherwise protected.",
             flags: MessageFlags.Ephemeral
         });
     }
@@ -2540,9 +2652,11 @@ async function promoteMember(interaction) {
 // ======================================================
 
 async function infractMember(interaction) {
-    if (!isStaff(interaction.member)) {
+    const actor = await interaction.guild.members.fetch(interaction.user.id);
+
+    if (!actor.roles.cache.has(INFRACTOR_PERMISSION_ROLE_ID)) {
         return interaction.reply({
-            content: "❌ Staff only.",
+            content: "❌ You do not have permission to issue staff infractions. You need the designated Infraction permission role.",
             flags: MessageFlags.Ephemeral
         });
     }
@@ -2563,20 +2677,53 @@ async function infractMember(interaction) {
         });
     }
 
-    if (!target.roles.cache.has(STAFF_ROLE_ID)) {
+    // Infractions may be issued to anyone holding a configured staff rank,
+    // not just the basic Low Rank staff role.
+    const targetIsStaff = [...STAFF_ROLE_IDS].some(roleId =>
+        target.roles.cache.has(roleId)
+    );
+
+    if (!targetIsStaff) {
         return interaction.reply({
-            content: "❌ Only members with the eligible staff role can receive an infraction through this command.",
+            content: "❌ This member does not hold a configured staff rank.",
             flags: MessageFlags.Ephemeral
         });
     }
 
-    if (!canModerate(
-        interaction.member,
-        target
-    )) {
+    // The dedicated infraction permission role is the authority check.
+    // Still block self-infractions, the server owner, and the bot account.
+    if (
+        target.id === interaction.user.id ||
+        target.id === interaction.guild.ownerId ||
+        target.id === client.user.id
+    ) {
         return interaction.reply({
-            content:
-                "❌ You cannot infract this member.",
+            content: "❌ You cannot issue an infraction to this member.",
+            flags: MessageFlags.Ephemeral
+        });
+    }
+
+    const validTypes = ["verbal_warning", "warning", "strike", "suspended", "demotion", "termination"];
+    if (!validTypes.includes(type)) {
+        return interaction.reply({
+            content: "❌ Invalid infraction type.",
+            flags: MessageFlags.Ephemeral
+        });
+    }
+
+    if (["verbal_warning", "warning", "strike", "suspended"].includes(type)) {
+        try {
+            await recordInfraction(target, interaction.user, reason, type);
+        } catch (error) {
+            console.error("Failed to apply infraction role:", error);
+            return interaction.reply({
+                content: `❌ The infraction could not be fully applied: ${error.message}`,
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        return interaction.reply({
+            content: `✅ ${type.replaceAll("_", " ")} recorded for ${target}.`,
             flags: MessageFlags.Ephemeral
         });
     }
@@ -4390,22 +4537,12 @@ commands.push(
                 .setDescription("Infraction type")
                 .setRequired(true)
                 .addChoices(
-                    {
-                        name: "Warning",
-                        value: "warning"
-                    },
-                    {
-                        name: "Strike",
-                        value: "strike"
-                    },
-                    {
-                        name: "Demotion",
-                        value: "demotion"
-                    },
-                    {
-                        name: "Termination",
-                        value: "termination"
-                    }
+                    { name: "Verbal Warning", value: "verbal_warning" },
+                    { name: "Warning", value: "warning" },
+                    { name: "Strike", value: "strike" },
+                    { name: "Suspended", value: "suspended" },
+                    { name: "Demotion", value: "demotion" },
+                    { name: "Termination", value: "termination" }
                 )
         ),
 
@@ -5009,59 +5146,38 @@ client.on(
 
                     case "warn": {
                         const target =
-                            interaction.options.getMember(
-                                "user"
-                            );
+                            interaction.options.getMember("user");
 
                         const reason =
-                            interaction.options.getString(
-                                "reason"
-                            );
+                            interaction.options.getString("reason");
 
-                        if (!isStaff(
-                            interaction.member
-                        )) {
+                        if (!interaction.member.roles.cache.has(INFRACTOR_PERMISSION_ROLE_ID)) {
                             return interaction.reply({
-                                content:
-                                    "❌ Staff only.",
-                                flags:
-                                    MessageFlags.Ephemeral
+                                content: "❌ You do not have permission to issue staff infractions.",
+                                flags: MessageFlags.Ephemeral
                             });
                         }
 
-                        if (!target ||
-                            !canModerate(
-                                interaction.member,
-                                target
-                            )
-                        ) {
+                        if (!target || !canModerate(interaction.member, target)) {
                             return interaction.reply({
-                                content:
-                                    "❌ You cannot warn this member.",
-                                flags:
-                                    MessageFlags.Ephemeral
+                                content: "❌ You cannot warn this member.",
+                                flags: MessageFlags.Ephemeral
                             });
                         }
 
-                        addInfraction(
-                            target.id,
-                            interaction.user.id,
-                            reason,
-                            "warning"
-                        );
-
-                        await logInfraction(
-                            target,
-                            interaction.user,
-                            reason,
-                            "warning"
-                        );
+                        try {
+                            await recordInfraction(target, interaction.user, reason, "warning");
+                        } catch (error) {
+                            console.error("Failed to apply warning:", error);
+                            return interaction.reply({
+                                content: `❌ The warning could not be fully applied: ${error.message}`,
+                                flags: MessageFlags.Ephemeral
+                            });
+                        }
 
                         return interaction.reply({
-                            content:
-                                `⚠️ Warning issued to ${target}.`,
-                            flags:
-                                MessageFlags.Ephemeral
+                            content: `⚠️ Warning issued to ${target}.`,
+                            flags: MessageFlags.Ephemeral
                         });
                     }
 
