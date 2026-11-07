@@ -15,7 +15,10 @@ const {
     ChannelType,
     PermissionFlagsBits,
     StringSelectMenuBuilder,
-    StringSelectMenuOptionBuilder
+    StringSelectMenuOptionBuilder,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle
 } = require("discord.js");
 
 const fs = require("fs");
@@ -35,7 +38,12 @@ const GUILD_ID = "1557369608170905670";
 // ======================================================
 
 const PARTNERSHIP_CHANNEL_ID = "1558473199098921042";
-const LOG_CHANNEL_ID = "1566431769903890722";
+const PAID_AD_CHANNEL_ID = "1558473196053987388";
+const LOG_CHANNEL_ID = "1558473289591029851";
+const APPLICATION_PANEL_CHANNEL_ID = "1558731987261329409";
+const APPLICATION_SUBMISSIONS_CHANNEL_ID = "1558731905963130890";
+const TIMEZONE_CHANNEL_ID = "1566007619968172122";
+const TICKET_LOG_CHANNEL_ID = "1558473266413305886";
 
 const TICKET_PANEL_CHANNEL_ID = "1558473182476763334";
 
@@ -48,8 +56,7 @@ const QOTD_CHANNEL_ID = "1558473206418116678";
 const INFRACTION_CHANNEL_ID = "1558473256921731123";
 const PROMOTION_CHANNEL_ID = "1558473255751262248";
 
-const MOD_LOG_CHANNEL_ID =
-    process.env.MOD_LOG_CHANNEL_ID || INFRACTION_CHANNEL_ID;
+const MOD_LOG_CHANNEL_ID = LOG_CHANNEL_ID;
 
 // ======================================================
 // ROLES
@@ -74,6 +81,20 @@ const SHR_ROLE_IDS = [
 const VERIFICATION_ROLE_ID = "1566308232119722025";
 
 const GIVEAWAY_HOST_ROLE_ID = "1567115692430331954";
+
+const APPLICATION_REVIEWERS = {
+    lr: ["1558477508129849434"],
+    support: ["1558477508129849434"],
+    hr: ["1558477508129849434"],
+    shr: ["1557720153096061028", "1558477281293377658"]
+};
+
+const TIMEZONE_ROLE_PREFIX = "UTC";
+const TIMEZONE_ROLE_FILE = path.join(__dirname, "timezone_roles.json");
+let timezoneRoleMap = loadJSON(TIMEZONE_ROLE_FILE, {});
+const applicationDrafts = new Map();
+const TIMEZONE_PAGE_SIZE = 25;
+
 
 const STAFF_ROLE_IDS = new Set([
     STAFF_ROLE_ID,
@@ -336,6 +357,16 @@ function formatDuration(ms) {
     }
 
     return `${Math.floor(hours / 24)}d`;
+}
+
+// ======================================================
+// TICKET LOGGING
+// ======================================================
+
+async function sendTicketLog(embed, files = []) {
+    const channel = await client.channels.fetch(TICKET_LOG_CHANNEL_ID).catch(() => null);
+    if (!channel?.isTextBased()) return;
+    await channel.send({ embeds: [embed], files }).catch(error => console.error("Ticket log error:", error));
 }
 
 // ======================================================
@@ -737,6 +768,18 @@ async function createTicket(interaction, type) {
             content:
                 `✅ Your **${config.name}** has been created: ${channel}`
         });
+
+        await sendTicketLog(
+            new EmbedBuilder()
+                .setColor(0x57F287)
+                .setTitle("🎫 Ticket Created")
+                .addFields(
+                    { name: "Ticket", value: `${channel}`, inline: true },
+                    { name: "Owner", value: `${interaction.user} (\`${interaction.user.id}\`)`, inline: true },
+                    { name: "Department", value: config.name, inline: true }
+                )
+                .setTimestamp()
+        );
     } catch (error) {
         console.error("Ticket creation failed:", error);
 
@@ -794,6 +837,7 @@ async function claimTicket(interaction) {
     await interaction.channel.send(
         `🙋 **Ticket claimed by ${interaction.user}.**`
     );
+    await sendTicketLog(new EmbedBuilder().setColor(0x5865F2).setTitle("🙋 Ticket Claimed").setDescription(`**Channel:** <#${interaction.channel.id}>\n**Claimed by:** ${interaction.user}`).setTimestamp());
 }
 
 // ======================================================
@@ -853,6 +897,7 @@ async function unclaimTicket(interaction) {
     await interaction.channel.send(
         `↩️ **Ticket unclaimed by ${interaction.user}.**`
     );
+    await sendTicketLog(new EmbedBuilder().setColor(0xFEE75C).setTitle("↩️ Ticket Unclaimed").setDescription(`**Channel:** <#${interaction.channel.id}>\n**Unclaimed by:** ${interaction.user}`).setTimestamp());
 }
 
 // ======================================================
@@ -894,6 +939,7 @@ async function closeTicket(interaction) {
     await interaction.channel.send(
         `🔒 Ticket closed by ${interaction.user}.`
     );
+    await sendTicketLog(new EmbedBuilder().setColor(0xED4245).setTitle("🔒 Ticket Closed").setDescription(`**Channel:** #${interaction.channel.name} (\`${interaction.channel.id}\`)\n**Owner:** <@${ticket.userId}>\n**Closed by:** ${interaction.user}`).setTimestamp());
 
     setTimeout(async () => {
         try {
@@ -1462,6 +1508,14 @@ async function transcriptTicket(interaction) {
         content: "📄 Transcript created.",
         files: [filepath]
     });
+    await sendTicketLog(
+        new EmbedBuilder()
+            .setColor(0x5865F2)
+            .setTitle("📄 Ticket Transcript")
+            .setDescription(`**Ticket:** #${interaction.channel.name} (\`${interaction.channel.id}\`)\n**Requested by:** ${interaction.user}`)
+            .setTimestamp(),
+        [{ attachment: filepath, name: filename }]
+    );
 
     setTimeout(() => {
         try {
@@ -1720,9 +1774,12 @@ async function createPartnership(interaction) {
         });
     }
 
+    const announcementChannelId = paidAdPing
+        ? PAID_AD_CHANNEL_ID
+        : PARTNERSHIP_CHANNEL_ID;
     const channel =
         await client.channels.fetch(
-            PARTNERSHIP_CHANNEL_ID
+            announcementChannelId
         ).catch(() => null);
 
     if (!channel?.isTextBased()) {
@@ -1821,7 +1878,7 @@ async function createPartnership(interaction) {
         .setTimestamp();
 
     const announcementContent = paidAdPing
-        ? `🤝 **NEW PARTNERSHIP** <@&1557974795067457606>`
+        ? `💰 **PAID PARTNERSHIP ADVERTISEMENT** <@&1557974795067457606>`
         : "🤝 **NEW PARTNERSHIP**";
 
     await channel.send({
@@ -1853,7 +1910,7 @@ async function createPartnership(interaction) {
             `✅ **Partnership created successfully!**\n\n` +
             `**Server:** ${serverName}\n` +
             `**Representatives:** ${representativeMentions}\n` +
-            `**Announcement:** <#${PARTNERSHIP_CHANNEL_ID}>` +
+            `**Announcement:** <#${announcementChannelId}>` +
             failureText
     });
 }
@@ -2502,6 +2559,13 @@ async function infractMember(interaction) {
     if (!target) {
         return interaction.reply({
             content: "❌ Member not found.",
+            flags: MessageFlags.Ephemeral
+        });
+    }
+
+    if (!target.roles.cache.has(STAFF_ROLE_ID)) {
+        return interaction.reply({
+            content: "❌ Only members with the eligible staff role can receive an infraction through this command.",
             flags: MessageFlags.Ephemeral
         });
     }
@@ -3937,6 +4001,289 @@ client.on(
 );
 
 // ======================================================
+// APPLICATIONS
+// ======================================================
+
+const APPLICATIONS = {
+    lr: {
+        label: "Low Rank",
+        reviewerRoles: APPLICATION_REVIEWERS.lr,
+        questions: [
+            ["Discord Username", "What is your Discord username?", true],
+            ["Age", "Your age (optional).", false],
+            ["Timezone & Availability", "Include your timezone and usual availability.", true],
+            ["Weekly Hours", "How many hours can you realistically dedicate each week?", true],
+            ["2FA", "Do you have Two-Factor Authentication enabled? Yes / No", true],
+            ["Server History", "How long have you been here, and why did you join?", true],
+            ["Prior Experience", "Describe any previous moderation experience, or write None.", true],
+            ["Why Us?", "Why do you want to join this staff team? What qualities do you bring?", true],
+            ["Spam Control", "A member is spamming emojis and long messages. What immediate actions would you take?", true],
+            ["Handling Defiance", "A user mocks you after a polite warning. How would you respond?", true],
+            ["The Friend Test", "A close friend breaks a rule. How would you handle it?", true],
+            ["Escalation", "A raid begins but you cannot ban users. Explain your step-by-step response.", true],
+            ["Receiving Feedback", "How do you respond to constructive criticism from senior staff?", true],
+            ["Final Comments", "Anything else management should know?", false]
+        ]
+    },
+    support: {
+        label: "Support Staff",
+        reviewerRoles: APPLICATION_REVIEWERS.support,
+        questions: [
+            ["Discord Username", "What is your Discord username?", true],
+            ["Timezone & Availability", "When are you most active to help users? Include timezone.", true],
+            ["Weekly Hours", "How many hours can you dedicate each week?", true],
+            ["Communication", "Do you prefer public help channels, private tickets, or voice?", true],
+            ["Knowledge Base", "Rate your familiarity with this server's rules, features, bots and layout from 1–10.", true],
+            ["Prior Experience", "Describe previous support, customer service, or helper experience.", true],
+            ["Good Support", "What makes a good support experience different from a bad one?", true],
+            ["Unclear User", "A ticket only says 'It's broken, help me.' How do you respond?", true],
+            ["Angry User", "A frustrated user types in caps and blames staff. How do you handle it?", true],
+            ["Unknown Answer", "A user asks something you do not know. What do you do next?", true],
+            ["Tech Glitch", "A command or role is not working. What basic checks do you perform?", true],
+            ["Escalations & Burnout", "When do you escalate an issue, and how do you balance duties with personal time?", true]
+        ]
+    },
+    hr: {
+        label: "High Rank",
+        reviewerRoles: APPLICATION_REVIEWERS.hr,
+        questions: [
+            ["Discord Username", "What is your Discord username?", true],
+            ["Roblox Username", "Your Roblox username, if applicable.", false],
+            ["Current Rank", "What is your current MR / Supervisor rank?", true],
+            ["Time in Group", "How long have you been here and held your current MR position?", true],
+            ["Availability", "What days and times can you oversee operations? Include timezone.", true],
+            ["Role of HR", "What is the purpose of an HR, and how does it differ from an MR?", true],
+            ["Training & Mentorship", "How would you mentor an LR who is struggling or lacks confidence?", true],
+            ["Handling Bias", "How do you remain neutral when friends are involved?", true],
+            ["Staff Slacking", "Several LRs/MRs ignore tickets and let chat become chaotic. What do you do?", true],
+            ["MR Insubordination", "An MR openly disrespects you or refuses an instruction. How do you respond?", true],
+            ["Borderline Ban", "A serious issue is not clearly covered by the rules. How do you decide what to do?", true],
+            ["Escalation to SHR", "A backend change is needed. Write an example report to an SHR.", true],
+            ["Improving Staff", "What should the staff team improve, and how would you address it?", true],
+            ["Why Promote You?", "Why are you ready for HR responsibilities?", true]
+        ]
+    },
+    shr: {
+        label: "Senior High Rank",
+        reviewerRoles: APPLICATION_REVIEWERS.shr,
+        questions: [
+            ["Discord Username", "What is your Discord username?", true],
+            ["Roblox Account", "Roblox username or account link, if applicable.", false],
+            ["Current HR Position", "What is your current high-rank position?", true],
+            ["Time Served", "How long have you held your current HR role?", true],
+            ["Weekly Commitment", "How many hours per week can you dedicate to leadership and administration?", true],
+            ["Mindset of an SHR", "What is an SHR responsible for, and how does it differ from an HR?", true],
+            ["Strategic Vision", "Name one major system, policy, or initiative you would introduce.", true],
+            ["Maintaining Discipline", "How would you maintain standards and prevent burnout among HRs?", true],
+            ["HR Abuse of Power", "You receive credible evidence that a friend who is an HR abused permissions. What are your steps?", true],
+            ["Community Crisis", "The community is mass-pinging staff over an unpopular update. What do you do first?", true],
+            ["Staff Conflict", "Two HRs publicly disagree and divide staff. How do you resolve it?", true],
+            ["Unwritten Situation", "A critical issue is not covered by policy. How do you make an executive decision?", true],
+            ["Executive Disagreement", "Ownership rejects a project you developed. How do you respond?", true],
+            ["Ultimate Case", "Why should the Founders select you for an executive promotion?", true]
+        ]
+    }
+};
+
+function applicationPages(type) {
+    const questions = APPLICATIONS[type].questions;
+    const pages = [];
+    for (let i = 0; i < questions.length; i += 4) pages.push(questions.slice(i, i + 4));
+    return pages;
+}
+
+function buildApplicationModal(type, page, userId) {
+    const config = APPLICATIONS[type];
+    const pages = applicationPages(type);
+    const questions = pages[page];
+    const modal = new ModalBuilder()
+        .setCustomId(`application_modal:${type}:${page}:${userId}`)
+        .setTitle(`${config.label} Application • ${page + 1}/${pages.length}`);
+    const rows = questions.map((question, index) => {
+        const qIndex = page * 4 + index;
+        const input = new TextInputBuilder()
+            .setCustomId(`answer_${qIndex}`)
+            .setLabel(question[0].slice(0, 45))
+            .setPlaceholder(question[1].slice(0, 100))
+            .setStyle(question[1].length > 85 ? TextInputStyle.Paragraph : TextInputStyle.Short)
+            .setRequired(question[2])
+            .setMaxLength(1000);
+        return new ActionRowBuilder().addComponents(input);
+    });
+    modal.addComponents(...rows);
+    return modal;
+}
+
+async function showApplicationPanel() {
+    const channel = await client.channels.fetch(APPLICATION_PANEL_CHANNEL_ID).catch(() => null);
+    if (!channel?.isTextBased()) return;
+    const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+    const existing = recent?.find(m => m.author.id === client.user.id && m.embeds.some(e => e.title === "📝 Staff Applications"));
+    if (existing) return;
+    const embed = new EmbedBuilder()
+        .setColor(0x5865F2)
+        .setTitle("📝 Staff Applications")
+        .setDescription("Select the position you wish to apply for from the menu below. Please answer every question honestly. Applications are reviewed by the designated staff team.")
+        .addFields(
+            { name: "🟢 Low Rank", value: "Entry-level moderation and community duties.", inline: true },
+            { name: "🛟 Support Staff", value: "Assist members and handle support requests.", inline: true },
+            { name: "👑 High Rank", value: "Leadership, supervision and staff management.", inline: true },
+            { name: "⭐ Senior High Rank", value: "Executive leadership and server oversight.", inline: true }
+        )
+        .setFooter({ text: "Aksh's Advertising • Staff Applications" })
+        .setTimestamp();
+    const menu = new StringSelectMenuBuilder()
+        .setCustomId("application_select")
+        .setPlaceholder("Choose an application")
+        .addOptions(
+            { label: "Low Rank", value: "lr", description: "Apply for a Low Rank position", emoji: "🟢" },
+            { label: "Support Staff", value: "support", description: "Apply for Support Staff", emoji: "🛟" },
+            { label: "High Rank", value: "hr", description: "Apply for a High Rank position", emoji: "👑" },
+            { label: "Senior High Rank", value: "shr", description: "Apply for Senior High Rank", emoji: "⭐" }
+        );
+    await channel.send({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)] });
+}
+
+async function handleApplicationModal(interaction) {
+    const [, type, pageText, ownerId] = interaction.customId.split(":");
+    if (interaction.user.id !== ownerId || !APPLICATIONS[type]) {
+        return interaction.reply({ content: "This application form does not belong to you.", flags: MessageFlags.Ephemeral });
+    }
+    const page = Number(pageText);
+    const key = `${interaction.user.id}:${type}`;
+    const draft = applicationDrafts.get(key) || { answers: {} };
+    const questions = applicationPages(type)[page];
+    questions.forEach((question, index) => {
+        const qIndex = page * 4 + index;
+        draft.answers[qIndex] = interaction.fields.getTextInputValue(`answer_${qIndex}`).trim() || "Not provided";
+    });
+    applicationDrafts.set(key, draft);
+    const pages = applicationPages(type);
+    if (page + 1 < pages.length) {
+        return interaction.showModal(buildApplicationModal(type, page + 1, interaction.user.id));
+    }
+
+    const config = APPLICATIONS[type];
+    const channel = await client.channels.fetch(APPLICATION_SUBMISSIONS_CHANNEL_ID).catch(() => null);
+    if (!channel?.isTextBased()) {
+        applicationDrafts.delete(key);
+        return interaction.reply({ content: "The application submission channel could not be found. Please notify staff.", flags: MessageFlags.Ephemeral });
+    }
+    const embed = new EmbedBuilder()
+        .setColor(0x57F287)
+        .setTitle(`📨 ${config.label} Application`)
+        .setDescription(`**Applicant:** ${interaction.user} (\`${interaction.user.id}\`)\n**Application:** ${config.label}`)
+        .setFooter({ text: "Aksh's Advertising • Application Review" })
+        .setTimestamp();
+    config.questions.forEach((question, index) => {
+        const answer = safeText(draft.answers[index] || "Not provided", 1024);
+        embed.addFields({ name: question[0].slice(0, 256), value: answer || "Not provided", inline: false });
+    });
+    const roleMentions = config.reviewerRoles.map(id => `<@&${id}>`).join(" ");
+    await channel.send({ content: `New **${config.label}** application from ${interaction.user}.\n${roleMentions}`, embeds: [embed], allowedMentions: { users: [], roles: config.reviewerRoles, parse: [] } });
+    applicationDrafts.delete(key);
+    return interaction.reply({ content: `✅ Your **${config.label}** application has been submitted successfully.`, flags: MessageFlags.Ephemeral });
+}
+
+// ======================================================
+// TIMEZONE ROLES AND PAGINATED MENU
+// ======================================================
+
+function getTimezoneNames() {
+    const zones = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : ["Asia/Kolkata", "Etc/UTC", "Europe/London", "America/New_York"];
+    return [...new Set(["Etc/UTC", ...zones])].sort((a, b) => a.localeCompare(b));
+}
+
+function getUtcOffsetMinutes(timeZone, date = new Date()) {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "longOffset" }).formatToParts(date);
+    const label = parts.find(part => part.type === "timeZoneName")?.value || "GMT";
+    if (label === "GMT" || label === "GMT+00:00" || label === "GMT-00:00") return 0;
+    const match = label.match(/GMT([+-])(\d{2}):(\d{2})/);
+    if (!match) return 0;
+    return (match[1] === "+" ? 1 : -1) * (Number(match[2]) * 60 + Number(match[3]));
+}
+
+function formatUtcOffset(minutes) {
+    const sign = minutes >= 0 ? "+" : "-";
+    const abs = Math.abs(minutes);
+    return `UTC${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`;
+}
+
+async function ensureTimezoneRoles(guild) {
+    if (!guild) return;
+    const offsets = new Set();
+    for (const zone of getTimezoneNames()) {
+        offsets.add(getUtcOffsetMinutes(zone, new Date("2026-01-15T12:00:00Z")));
+        offsets.add(getUtcOffsetMinutes(zone, new Date("2026-07-15T12:00:00Z")));
+    }
+    for (const offset of offsets) {
+        const roleName = formatUtcOffset(offset);
+        let role = guild.roles.cache.find(r => r.name === roleName);
+        if (!role) {
+            try {
+                role = await guild.roles.create({ name: roleName, mentionable: false, reason: "Timezone self-role system" });
+            } catch (error) {
+                console.error(`Could not create timezone role ${roleName}:`, error.message);
+                continue;
+            }
+        }
+        timezoneRoleMap[String(offset)] = role.id;
+    }
+    saveJSON(TIMEZONE_ROLE_FILE, timezoneRoleMap);
+}
+
+function timezoneMenuComponents(page = 0) {
+    const zones = getTimezoneNames();
+    const pageCount = Math.ceil(zones.length / TIMEZONE_PAGE_SIZE);
+    const start = page * TIMEZONE_PAGE_SIZE;
+    const visible = zones.slice(start, start + TIMEZONE_PAGE_SIZE);
+    const select = new StringSelectMenuBuilder()
+        .setCustomId(`timezone_select:${page}`)
+        .setPlaceholder(`Select your timezone • Page ${page + 1}/${pageCount}`)
+        .addOptions(visible.map(zone => ({
+            label: zone.replaceAll("_", " ").slice(0, 100),
+            value: zone,
+            description: formatUtcOffset(getUtcOffsetMinutes(zone))
+        })));
+    const rows = [new ActionRowBuilder().addComponents(select)];
+    const buttons = new ActionRowBuilder();
+    buttons.addComponents(
+        new ButtonBuilder().setCustomId(`timezone_page:${Math.max(0, page - 1)}`).setLabel("Previous").setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
+        new ButtonBuilder().setCustomId(`timezone_page:${Math.min(pageCount - 1, page + 1)}`).setLabel("Next").setStyle(ButtonStyle.Primary).setDisabled(page >= pageCount - 1)
+    );
+    rows.push(buttons);
+    return rows;
+}
+
+async function showTimezonePanel() {
+    const channel = await client.channels.fetch(TIMEZONE_CHANNEL_ID).catch(() => null);
+    if (!channel?.isTextBased()) return;
+    const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+    const existing = recent?.find(m => m.author.id === client.user.id && m.embeds.some(e => e.title === "🌍 Choose Your Timezone"));
+    if (existing) return;
+    const embed = new EmbedBuilder()
+        .setColor(0x3498DB)
+        .setTitle("🌍 Choose Your Timezone")
+        .setDescription("Choose your IANA timezone from the paginated dropdown. The bot will assign the matching UTC-offset role. India is **Asia/Kolkata — UTC+05:30**.")
+        .setFooter({ text: "Aksh's Advertising • Timezone Roles" });
+    await channel.send({ embeds: [embed], components: timezoneMenuComponents(0) });
+}
+
+async function handleTimezoneSelect(interaction) {
+    const zone = interaction.values[0];
+    const offset = getUtcOffsetMinutes(zone);
+    const roleId = timezoneRoleMap[String(offset)];
+    if (!roleId) return interaction.reply({ content: `The role for ${formatUtcOffset(offset)} is not configured. Please notify an administrator.`, flags: MessageFlags.Ephemeral });
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    const role = interaction.guild.roles.cache.get(roleId);
+    if (!role) return interaction.reply({ content: "The timezone role is missing. Please notify an administrator.", flags: MessageFlags.Ephemeral });
+    const oldTimezoneRoles = member.roles.cache.filter(r => /^UTC[+-]\d{2}:\d{2}$/.test(r.name));
+    if (oldTimezoneRoles.size) await member.roles.remove(oldTimezoneRoles, "Timezone changed").catch(() => null);
+    await member.roles.add(role, `Selected timezone ${zone}`).catch(error => { throw error; });
+    return interaction.reply({ content: `✅ Your timezone is set to **${zone}** (${formatUtcOffset(offset)}). Role assigned: ${role}.`, flags: MessageFlags.Ephemeral });
+}
+
+// ======================================================
 // COMMAND DEFINITIONS
 // ======================================================
 
@@ -4481,6 +4828,11 @@ client.once(
         // Automatic verification panel
         await setupVerificationPanel();
 
+        // Applications and timezone roles/panel
+        await showApplicationPanel();
+        await ensureTimezoneRoles(guild);
+        await showTimezonePanel();
+
         // Existing reaction-role panel
         await setupReactionRoles();
 
@@ -4864,10 +5216,23 @@ client.on(
             }
 
             // ==================================================
+            // APPLICATION MODALS
+            // ==================================================
+
+            if (interaction.isModalSubmit() && interaction.customId.startsWith("application_modal:")) {
+                return handleApplicationModal(interaction);
+            }
+
+            // ==================================================
             // BUTTONS
             // ==================================================
 
             if (interaction.isButton()) {
+                if (interaction.customId.startsWith("timezone_page:")) {
+                    const page = Number(interaction.customId.split(":")[1]);
+                    return interaction.update({ components: timezoneMenuComponents(page) });
+                }
+
                 const id =
                     interaction.customId;
 
@@ -5011,6 +5376,16 @@ client.on(
             if (
                 interaction.isStringSelectMenu()
             ) {
+                if (interaction.customId === "application_select") {
+                    const type = interaction.values[0];
+                    applicationDrafts.delete(`${interaction.user.id}:${type}`);
+                    return interaction.showModal(buildApplicationModal(type, 0, interaction.user.id));
+                }
+
+                if (interaction.customId.startsWith("timezone_select:")) {
+                    return handleTimezoneSelect(interaction);
+                }
+
                 if (
                     interaction.customId ===
                     "ticket_escalate_select"
