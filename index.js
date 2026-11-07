@@ -2527,45 +2527,21 @@ async function promoteMember(interaction) {
         });
     }
 
-    if (!STAFF_ROLE_IDS.has(role.id)) {
-        return interaction.reply({
-            content:
-                "❌ That role is not configured as a staff rank.",
-            flags: MessageFlags.Ephemeral
-        });
-    }
-
-    // A promoter may only assign a staff rank below their own highest role.
-    if (role.position >= actor.roles.highest.position) {
-        const autoReason = `Automatic warning: attempted to promote ${target.user.tag} to ${role.name}, which is equal to or above the promoter's own highest role.`;
-        try {
-            await recordInfraction(
-                actor,
-                client.user,
-                autoReason,
-                "warning"
-            );
-        } catch (error) {
-            console.error("Failed to apply automatic promotion infraction:", error);
-            // recordInfraction saves the case before attempting role assignment.
-            // Do not create a duplicate case if the role update fails.
-            await logInfraction(actor, client.user, autoReason, "warning").catch(() => { });
-        }
-
-        return interaction.reply({
-            content: `❌ Promotion denied. You cannot assign **${role.name}** because it is equal to or higher than your own highest role. An automatic warning has been recorded.`,
-            flags: MessageFlags.Ephemeral
-        });
-    }
-
+    // Promoters with the dedicated permission may assign ANY selectable server role.
+    // The bot's own role hierarchy is checked below because Discord enforces it.
     if (
-        target.id === actor.id ||
-        target.id === interaction.guild.ownerId ||
         target.id === client.user.id ||
-        actor.roles.highest.comparePositionTo(target.roles.highest) <= 0
+        target.id === interaction.guild.ownerId
     ) {
         return interaction.reply({
-            content: "❌ You cannot promote this member because they are equal to or above your current rank, or are otherwise protected.",
+            content: "❌ The server owner and this bot cannot be promotion targets.",
+            flags: MessageFlags.Ephemeral
+        });
+    }
+
+    if (role.id === interaction.guild.id || role.managed) {
+        return interaction.reply({
+            content: "❌ Discord does not allow this bot to assign the @everyone or an integration-managed role.",
             flags: MessageFlags.Ephemeral
         });
     }
