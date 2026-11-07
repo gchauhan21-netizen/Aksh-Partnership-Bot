@@ -4160,7 +4160,16 @@ async function handleApplicationModal(interaction) {
     applicationDrafts.set(key, draft);
     const pages = applicationPages(type);
     if (page + 1 < pages.length) {
-        return interaction.showModal(buildApplicationModal(type, page + 1, interaction.user.id));
+        const nextPage = page + 1;
+        const continueButton = new ButtonBuilder()
+            .setCustomId(`application_continue:${type}:${nextPage}:${interaction.user.id}`)
+            .setLabel(`Continue to page ${nextPage + 1} of ${pages.length}`)
+            .setStyle(ButtonStyle.Primary);
+        return interaction.reply({
+            content: `✅ Page ${page + 1} saved. Click below when you're ready to continue your application.`,
+            components: [new ActionRowBuilder().addComponents(continueButton)],
+            flags: MessageFlags.Ephemeral
+        });
     }
 
     const config = APPLICATIONS[type];
@@ -5228,6 +5237,19 @@ client.on(
             // ==================================================
 
             if (interaction.isButton()) {
+                if (interaction.customId.startsWith("application_continue:")) {
+                    const [, type, pageText, ownerId] = interaction.customId.split(":");
+                    const page = Number(pageText);
+                    const pages = APPLICATIONS[type] ? applicationPages(type) : [];
+                    if (interaction.user.id !== ownerId || !pages[page]) {
+                        return interaction.reply({
+                            content: "This application continuation button does not belong to you or has expired.",
+                            flags: MessageFlags.Ephemeral
+                        });
+                    }
+                    return interaction.showModal(buildApplicationModal(type, page, interaction.user.id));
+                }
+
                 if (interaction.customId.startsWith("timezone_page:")) {
                     const page = Number(interaction.customId.split(":")[1]);
                     return interaction.update({ components: timezoneMenuComponents(page) });
