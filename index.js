@@ -1677,6 +1677,556 @@ async function performEscalation(interaction) {
     });
 }
 
+
+// ======================================================
+// ORDER MANAGEMENT SYSTEM
+// ======================================================
+
+const ORDER_TICKET_CATEGORY_ID = "1570389740576841798";
+const ORDER_PANEL_CHANNEL_ID = "1570383007443984404";
+const ORDER_HR_ROLE_IDS = ["1558477508129849434", "1558672561192308786"];
+const DESIGNER_REWARD_ROLE_IDS = ["1570385835285544991", "1570385886909042798"];
+
+const ORDER_CATEGORIES = {
+    gfx: { label: "GFX", emoji: "🎨", roles: ["1570386031151284274"] },
+    clothing: { label: "Clothing", emoji: "👕", roles: ["1570386088021860392"] },
+    discord_servers: { label: "Discord Servers", emoji: "🖥️", roles: ["1570385933109567548"] },
+    discord_bots: { label: "Discord Bots", emoji: "🤖", roles: ["1570386131135107173"] },
+    liveries: { label: "Liveries", emoji: "🚘", roles: ["1570385778347999242"] },
+    game_dev: { label: "In-Game Development", emoji: "🎮", roles: ["1570386088021860392"] },
+    discord_embeds: { label: "Discord Embeds", emoji: "💠", roles: ["1570385933109567548"] }
+};
+
+const ORDER_STAGES = ["Submitted", "Claimed", "HR Assigned", "Accepted", "In Progress", "Delivered", "Completed"];
+const PAYMENT_STATES = ["Awaiting Payment", "Proof Submitted", "Under Review", "Approved", "Rejected", "Refund Requested", "Refunded"];
+const ORDER_DATA_FILE = path.join(DATA_DIR, "orders.json");
+let orderData = loadJSON(ORDER_DATA_FILE, {
+    nextId: 1,
+    orders: {},
+    services: Object.fromEntries(Object.keys(ORDER_CATEGORIES).map(key => [key, "open"]))
+});
+orderData.orders ||= {};
+orderData.services ||= {};
+orderData.nextId = Number.isInteger(orderData.nextId) && orderData.nextId > 0 ? orderData.nextId : 1;
+for (const key of Object.keys(ORDER_CATEGORIES)) {
+    if (!orderData.services[key]) orderData.services[key] = "open";
+}
+
+function saveOrders() {
+    saveJSON(ORDER_DATA_FILE, orderData);
+}
+
+function orderStaffFor(member, order) {
+    if (!member || !order) return false;
+    if (member.permissions.has(PermissionFlagsBits.Administrator) || isOwner(member)) return true;
+    const roles = ORDER_CATEGORIES[order.category]?.roles || [];
+    return roles.some(id => member.roles.cache.has(id));
+}
+
+function isOrderHR(member) {
+    return Boolean(member && (member.permissions.has(PermissionFlagsBits.Administrator) ||
+        ORDER_HR_ROLE_IDS.some(id => member.roles.cache.has(id))));
+}
+
+function canManageOrder(member, order) {
+    return orderStaffFor(member, order) || isOrderHR(member);
+}
+
+function orderProgressEmbed(order) {
+    const current = ORDER_STAGES.indexOf(order.stage);
+    const steps = ORDER_STAGES.map((stage, index) => {
+        const mark = index < current ? "✅" : index === current ? "🔵" : "⚪";
+        return `${mark} **${stage}**`;
+    }).join("\n");
+    return new EmbedBuilder()
+        .setColor(order.stage === "Completed" ? 0x57F287 : 0x5865F2)
+        .setTitle(`📊 Order Progress • ${order.id}`)
+        .setDescription(steps)
+        .addFields(
+            { name: "Current Stage", value: order.stage, inline: true },
+            { name: "Assigned Staff", value: order.claimedBy ? `<@${order.claimedBy}>` : "Unclaimed", inline: true },
+            { name: "Assigned HR", value: order.hrAssigned ? `<@${order.hrAssigned}>` : "Not assigned", inline: true }
+        )
+        .setFooter({ text: "Aksh's Advertising • Order Tracking" })
+        .setTimestamp();
+}
+
+function orderDetailsEmbed(order, user) {
+    const config = ORDER_CATEGORIES[order.category];
+    return new EmbedBuilder()
+        .setColor(0x5865F2)
+        .setTitle(`${config.emoji} ${config.label} Order • ${order.id}`)
+        .setDescription(`Thank you for placing an order with **Aksh's Advertising**.\n\n${user}, your order has been submitted. Staff will review it shortly.`)
+        .addFields(
+            { name: "Customer", value: `<@${order.userId}>`, inline: true },
+            { name: "Package", value: safeText(order.package, 100), inline: true },
+            { name: "Project Name", value: safeText(order.project, 200), inline: true },
+            { name: "Requirements", value: safeText(order.requirements, 1024), inline: false },
+            { name: "Budget / Deadline", value: safeText(order.budgetDeadline, 1024), inline: false },
+            { name: "References / Notes", value: safeText(order.references, 1024), inline: false },
+            { name: "Payment", value: order.payment, inline: true },
+            { name: "Priority", value: order.priority || "Normal", inline: true }
+        )
+        .setFooter({ text: "Aksh's Advertising • Order Management" })
+        .setTimestamp();
+}
+
+function buildOrderButtons(order) {
+    const row1 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("order_claim").setLabel("Claim").setEmoji("🙋").setStyle(ButtonStyle.Primary).setDisabled(Boolean(order.claimedBy)),
+        new ButtonBuilder().setCustomId("order_unclaim").setLabel("Unclaim").setEmoji("↩️").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("order_assign_hr").setLabel("Assign / Transfer HR").setEmoji("👑").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("order_remove_hr").setLabel("Remove HR").setEmoji("➖").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("order_status").setLabel("Update Status").setEmoji("📊").setStyle(ButtonStyle.Primary)
+    );
+    const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("order_payment").setLabel("Payment").setEmoji("💳").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("order_delivered").setLabel("Mark Delivered").setEmoji("📦").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId("order_revision").setLabel("Request Revision").setEmoji("📝").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("order_complete").setLabel("Confirm Complete").setEmoji("✅").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId("order_notes").setLabel("Staff Notes").setEmoji("🗒️").setStyle(ButtonStyle.Secondary)
+    );
+    const row3 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("order_info_request").setLabel("Request Information").setEmoji("❔").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("order_transcript").setLabel("Transcript").setEmoji("📄").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("order_close").setLabel("Close Order").setEmoji("🔒").setStyle(ButtonStyle.Danger)
+    );
+    return [row1, row2, row3];
+}
+
+async function updateOrderProgress(channel, order) {
+    if (!order.progressMessageId) return;
+    const msg = await channel.messages.fetch(order.progressMessageId).catch(() => null);
+    if (msg) await msg.edit({ embeds: [orderProgressEmbed(order)] }).catch(() => {});
+}
+
+async function sendOrderLog(title, description, color = 0x5865F2) {
+    const channel = await client.channels.fetch(TICKET_LOG_CHANNEL_ID).catch(() => null);
+    if (!channel?.isTextBased()) return;
+    await channel.send({ embeds: [new EmbedBuilder().setColor(color).setTitle(title).setDescription(description).setTimestamp()] }).catch(() => {});
+}
+
+async function sendOrderPanel() {
+    const channel = await client.channels.fetch(ORDER_PANEL_CHANNEL_ID).catch(() => null);
+    if (!channel?.isTextBased()) {
+        console.error("Order panel channel not found or is not text based.");
+        return;
+    }
+    const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+    const existing = recent?.find(m => m.author.id === client.user.id && m.embeds.some(e => e.title === "🛍️ AKSH'S ADVERTISING • ORDER CENTRE"));
+    if (existing) return existing;
+
+    const descriptions = Object.entries(ORDER_CATEGORIES).map(([key, item]) => {
+        const state = orderData.services[key] || "open";
+        const label = state === "open" ? "🟢 Open" : state === "limited" ? "🟡 Limited" : "🔴 Closed";
+        return `${item.emoji} **${item.label}** — ${label}`;
+    }).join("\n");
+    const embed = new EmbedBuilder()
+        .setColor(0x5865F2)
+        .setTitle("🛍️ AKSH'S ADVERTISING • ORDER CENTRE")
+        .setDescription("Welcome to our order centre. Select a service below to submit a request. Each order receives a private ticket and a unique tracking ID.\n\n" +
+            "### Available Services\n" + descriptions +
+            "\n\n### Before Ordering\n• Provide clear requirements and references.\n• Budgets and deadlines are reviewed by staff.\n• Payment proofs are checked manually.\n• Do not submit duplicate orders.")
+        .setFooter({ text: "Aksh's Advertising • Order Management" })
+        .setTimestamp();
+    const menu = new StringSelectMenuBuilder()
+        .setCustomId("order_category_select")
+        .setPlaceholder("Choose the service you want to order")
+        .addOptions(Object.entries(ORDER_CATEGORIES).map(([key, item]) =>
+            new StringSelectMenuOptionBuilder()
+                .setLabel(item.label)
+                .setValue(key)
+                .setEmoji(item.emoji)
+                .setDescription((orderData.services[key] || "open") === "closed" ? "Currently unavailable" : `Place a ${item.label} order`)
+        ));
+    return channel.send({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)] });
+}
+
+function buildOrderModal(category, userId) {
+    const config = ORDER_CATEGORIES[category];
+    const modal = new ModalBuilder()
+        .setCustomId(`order_modal:${category}:${userId}`)
+        .setTitle(`${config.label} Order Request`);
+    const fields = [
+        ["package", "Package (Basic / Standard / Premium / Custom)", TextInputStyle.Short, true],
+        ["project", "Project name", TextInputStyle.Short, true],
+        ["requirements", "Describe your requirements", TextInputStyle.Paragraph, true],
+        ["budget_deadline", "Budget and deadline", TextInputStyle.Short, true],
+        ["references", "References, links and extra notes", TextInputStyle.Paragraph, false]
+    ];
+    modal.addComponents(...fields.map(([id, label, style, required]) =>
+        new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId(id).setLabel(label).setStyle(style).setRequired(required).setMaxLength(1000)
+        )
+    ));
+    return modal;
+}
+
+async function handleOrderModal(interaction) {
+    const [, category, ownerId] = interaction.customId.split(":");
+    if (interaction.user.id !== ownerId || !ORDER_CATEGORIES[category]) {
+        return interaction.reply({ content: "This order form does not belong to you.", flags: MessageFlags.Ephemeral });
+    }
+    const availability = orderData.services[category] || "open";
+    if (availability === "closed") {
+        return interaction.reply({ content: "This service is currently closed. Please check the order status panel later.", flags: MessageFlags.Ephemeral });
+    }
+    const existing = Object.values(orderData.orders).find(o => o.guildId === interaction.guild.id && o.userId === interaction.user.id && !o.closedAt && o.status !== "Completed");
+    if (existing && interaction.guild.channels.cache.has(existing.channelId)) {
+        return interaction.reply({ content: `You already have an active order: <#${existing.channelId}>`, flags: MessageFlags.Ephemeral });
+    }
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    try {
+        const orderNumber = orderData.nextId++;
+        const orderId = `AKS-${String(orderNumber).padStart(4, "0")}`;
+        const config = ORDER_CATEGORIES[category];
+        const overwrites = [
+            { id: interaction.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+            { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks] },
+            { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ManageMessages] },
+            ...config.roles.map(id => ({ id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks] }))
+        ];
+        const channel = await interaction.guild.channels.create({
+            name: `order-${orderId.toLowerCase()}`,
+            type: ChannelType.GuildText,
+            parent: ORDER_TICKET_CATEGORY_ID,
+            permissionOverwrites: overwrites,
+            topic: `${orderId} | ${config.label} | Customer: ${interaction.user.id}`
+        });
+        const order = {
+            id: orderId, guildId: interaction.guild.id, channelId: channel.id, userId: interaction.user.id,
+            category, package: safeText(interaction.fields.getTextInputValue("package"), 100),
+            project: safeText(interaction.fields.getTextInputValue("project"), 200),
+            requirements: safeText(interaction.fields.getTextInputValue("requirements"), 1000),
+            budgetDeadline: safeText(interaction.fields.getTextInputValue("budget_deadline"), 500),
+            references: safeText(interaction.fields.getTextInputValue("references") || "None provided", 1000),
+            stage: "Submitted", status: "Submitted", claimedBy: null, hrAssigned: null,
+            payment: "Awaiting Payment", priority: "Normal", createdAt: Date.now(),
+            statusHistory: [{ status: "Submitted", by: interaction.user.id, at: Date.now() }],
+            revisions: [], notes: [], delivery: null, closedAt: null
+        };
+        orderData.orders[channel.id] = order;
+        saveOrders();
+        const details = await channel.send({
+            content: `${interaction.user} ${config.roles.map(id => `<@&${id}>`).join(" ")}`,
+            embeds: [orderDetailsEmbed(order, interaction.user)],
+            allowedMentions: { users: [interaction.user.id], roles: config.roles }
+        });
+        const progress = await channel.send({ embeds: [orderProgressEmbed(order)] });
+        order.detailsMessageId = details.id;
+        order.progressMessageId = progress.id;
+        saveOrders();
+        await channel.send({ content: "Use the controls below to manage this order. Only the assigned service team and authorised HR staff should handle it.", components: buildOrderButtons(order) });
+        await interaction.editReply({ content: `✅ Your order **${orderId}** has been created: ${channel}` });
+        await sendOrderLog("🛍️ Order Created", `**Order:** ${orderId}\n**Customer:** ${interaction.user}\n**Category:** ${config.label}\n**Ticket:** ${channel}`, 0x57F287);
+    } catch (error) {
+        console.error("Order creation failed:", error);
+        await interaction.editReply({ content: "❌ I could not create your order. Check the ticket category ID and bot permissions." });
+    }
+}
+
+async function refreshOrderControls(interaction, order) {
+    const messages = await interaction.channel.messages.fetch({ limit: 30 }).catch(() => null);
+    const controlMessage = messages?.find(m => m.author.id === client.user.id && m.components.length && m.components.some(row => row.components.some(c => c.customId?.startsWith("order_"))));
+    if (controlMessage) await controlMessage.edit({ components: buildOrderButtons(order) }).catch(() => {});
+}
+
+async function handleOrderButton(interaction) {
+    const order = orderData.orders[interaction.channel.id];
+    if (!order) return interaction.reply({ content: "This channel is not a registered order ticket.", flags: MessageFlags.Ephemeral });
+    const customer = interaction.user.id === order.userId;
+    const serviceStaff = orderStaffFor(interaction.member, order);
+    const hrStaff = isOrderHR(interaction.member);
+    const staff = serviceStaff || hrStaff;
+
+    switch (interaction.customId) {
+        case "order_claim": {
+            if (!serviceStaff) return interaction.reply({ content: "Only the assigned service team can claim this order.", flags: MessageFlags.Ephemeral });
+            if (order.claimedBy) return interaction.reply({ content: `Already claimed by <@${order.claimedBy}>.`, flags: MessageFlags.Ephemeral });
+            order.claimedBy = interaction.user.id;
+            if (order.stage === "Submitted") order.stage = "Claimed";
+            order.status = order.stage;
+            order.statusHistory.push({ status: order.stage, by: interaction.user.id, at: Date.now() });
+            saveOrders();
+            await interaction.reply({ content: `🙋 ${interaction.user} claimed **${order.id}**.` });
+            await updateOrderProgress(interaction.channel, order);
+            await refreshOrderControls(interaction, order);
+            return sendOrderLog("🙋 Order Claimed", `**Order:** ${order.id}\n**Staff:** ${interaction.user}\n**Ticket:** ${interaction.channel}`);
+        }
+        case "order_unclaim": {
+            if ((!serviceStaff && !hrStaff) || (!hrStaff && order.claimedBy !== interaction.user.id)) return interaction.reply({ content: "Only the current claimer or authorised HR can unclaim this order.", flags: MessageFlags.Ephemeral });
+            if (!order.claimedBy) return interaction.reply({ content: "This order is not claimed.", flags: MessageFlags.Ephemeral });
+            order.claimedBy = null;
+            if (order.stage === "Claimed") order.stage = "Submitted";
+            order.status = order.stage;
+            order.statusHistory.push({ status: "Unclaimed", by: interaction.user.id, at: Date.now() });
+            saveOrders();
+            await interaction.reply({ content: `↩️ Order **${order.id}** was unclaimed.` });
+            await updateOrderProgress(interaction.channel, order);
+            return refreshOrderControls(interaction, order);
+        }
+        case "order_assign_hr": {
+            if (!staff) return interaction.reply({ content: "Only authorised staff can assign HR.", flags: MessageFlags.Ephemeral });
+            const modal = new ModalBuilder().setCustomId(`order_hr_modal:${order.id}`).setTitle("Assign / Transfer HR");
+            modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("hr_user").setLabel("HR member ID or mention").setStyle(TextInputStyle.Short).setRequired(true)));
+            return interaction.showModal(modal);
+        }
+        case "order_remove_hr": {
+            if (!staff) return interaction.reply({ content: "Only authorised staff can remove HR assignment.", flags: MessageFlags.Ephemeral });
+            if (!order.hrAssigned) return interaction.reply({ content: "No HR member is assigned.", flags: MessageFlags.Ephemeral });
+            const old = order.hrAssigned;
+            order.hrAssigned = null;
+            if (order.stage === "HR Assigned") order.stage = order.claimedBy ? "Claimed" : "Submitted";
+            order.status = order.stage;
+            order.statusHistory.push({ status: "HR assignment removed", by: interaction.user.id, at: Date.now() });
+            await interaction.channel.permissionOverwrites.delete(old).catch(() => {});
+            saveOrders();
+            await interaction.reply({ content: `HR assignment removed from <@${old}>.` });
+            await updateOrderProgress(interaction.channel, order);
+            await sendOrderLog("👑 HR Removed", `**Order:** ${order.id}\n**Removed:** <@${old}>\n**By:** ${interaction.user}`);
+            return;
+        }
+        case "order_status": {
+            if (!staff) return interaction.reply({ content: "Only order staff or HR can update status.", flags: MessageFlags.Ephemeral });
+            const menu = new StringSelectMenuBuilder().setCustomId("order_status_select").setPlaceholder("Select the new order stage").addOptions(ORDER_STAGES.map(stage => ({ label: stage, value: stage })));
+            return interaction.reply({ content: `Choose a stage for **${order.id}**.`, components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+        }
+        case "order_payment": {
+            if (!staff) return interaction.reply({ content: "Only order staff or HR can update payment status.", flags: MessageFlags.Ephemeral });
+            const menu = new StringSelectMenuBuilder().setCustomId("order_payment_select").setPlaceholder("Select payment status").addOptions(PAYMENT_STATES.map(state => ({ label: state, value: state })));
+            return interaction.reply({ content: `Update payment for **${order.id}**. Proof must be checked manually.`, components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+        }
+        case "order_delivered": {
+            if (!staff) return interaction.reply({ content: "Only order staff or HR can mark delivery.", flags: MessageFlags.Ephemeral });
+            if (order.stage === "Completed") return interaction.reply({ content: "This order is already completed.", flags: MessageFlags.Ephemeral });
+            order.stage = "Delivered"; order.status = "Delivered"; order.delivery = { by: interaction.user.id, at: Date.now() };
+            order.statusHistory.push({ status: "Delivered", by: interaction.user.id, at: Date.now() });
+            saveOrders();
+            await interaction.reply({ content: `📦 **${order.id}** has been marked as delivered. The customer can confirm completion or request a revision.` });
+            await interaction.channel.send(`<@${order.userId}> Your order has been marked as delivered. Use **Confirm Complete** or **Request Revision** below.`);
+            await updateOrderProgress(interaction.channel, order);
+            return sendOrderLog("📦 Order Delivered", `**Order:** ${order.id}\n**Delivered by:** ${interaction.user}`);
+        }
+        case "order_revision": {
+            if (!customer) return interaction.reply({ content: "Only the customer who placed this order can request a revision.", flags: MessageFlags.Ephemeral });
+            const modal = new ModalBuilder().setCustomId(`order_revision_modal:${order.id}`).setTitle("Request an Order Revision");
+            modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("revision").setLabel("What would you like changed?").setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1000)));
+            return interaction.showModal(modal);
+        }
+        case "order_complete": {
+            if (!customer && !staff) return interaction.reply({ content: "Only the customer or authorised order staff can complete this order.", flags: MessageFlags.Ephemeral });
+            if (order.stage !== "Delivered" && !staff) return interaction.reply({ content: "You can confirm completion after the order has been marked Delivered.", flags: MessageFlags.Ephemeral });
+            order.stage = "Completed"; order.status = "Completed"; order.completedAt = Date.now();
+            order.statusHistory.push({ status: "Completed", by: interaction.user.id, at: Date.now() });
+            saveOrders();
+            await interaction.reply({ content: `✅ **${order.id}** has been marked Completed.` });
+            await updateOrderProgress(interaction.channel, order);
+            await sendOrderLog("✅ Order Completed", `**Order:** ${order.id}\n**Completed by:** ${interaction.user}`);
+            return;
+        }
+        case "order_notes": {
+            if (!staff) return interaction.reply({ content: "Only order staff or HR can add staff notes.", flags: MessageFlags.Ephemeral });
+            const modal = new ModalBuilder().setCustomId(`order_notes_modal:${order.id}`).setTitle("Add Staff Note");
+            modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("note").setLabel("Internal staff note").setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1000)));
+            return interaction.showModal(modal);
+        }
+        case "order_info_request": {
+            if (!staff) return interaction.reply({ content: "Only order staff or HR can request information.", flags: MessageFlags.Ephemeral });
+            const modal = new ModalBuilder().setCustomId(`order_info_modal:${order.id}`).setTitle("Request Customer Information");
+            modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("request").setLabel("What information is needed?").setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1000)));
+            return interaction.showModal(modal);
+        }
+        case "order_transcript": {
+            if (!staff) return interaction.reply({ content: "Only order staff or HR can create a transcript.", flags: MessageFlags.Ephemeral });
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+            const messages = [];
+            let before;
+            for (let i = 0; i < 10; i++) {
+                const batch = await interaction.channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) }).catch(() => null);
+                if (!batch?.size) break;
+                messages.push(...batch.map(m => `[${m.createdAt.toISOString()}] ${m.author.tag}: ${m.content}`));
+                before = batch.last().id;
+                if (batch.size < 100) break;
+            }
+            const filepath = path.join(DATA_DIR, `order-transcript-${order.id}.txt`);
+            fs.writeFileSync(filepath, messages.reverse().join("\n") || "No messages.");
+            await interaction.editReply({ content: `Transcript for ${order.id}:`, files: [filepath] });
+            await sendOrderLog("📄 Order Transcript", `**Order:** ${order.id}\n**Requested by:** ${interaction.user}`);
+            setTimeout(() => { try { fs.unlinkSync(filepath); } catch {} }, 15000);
+            return;
+        }
+        case "order_close": {
+            if (!staff && !customer) return interaction.reply({ content: "You cannot close this order.", flags: MessageFlags.Ephemeral });
+            if (order.stage !== "Completed" && !isOwner(interaction.member)) return interaction.reply({ content: "Orders must be Completed before they can be closed. Ask management if this order needs exceptional closure.", flags: MessageFlags.Ephemeral });
+            await interaction.reply({ content: "🔒 This order ticket will close in 5 seconds.", flags: MessageFlags.Ephemeral });
+            order.closedAt = Date.now(); saveOrders();
+            await sendOrderLog("🔒 Order Ticket Closed", `**Order:** ${order.id}\n**Closed by:** ${interaction.user}`);
+            setTimeout(() => interaction.channel.delete("Order ticket closed").catch(() => {}), 5000);
+            return;
+        }
+    }
+}
+
+async function handleOrderModalSubmit(interaction) {
+    const [kind, orderId] = interaction.customId.split(":");
+    const order = Object.values(orderData.orders).find(o => o.id === orderId);
+    if (!order || order.channelId !== interaction.channelId && kind !== "order_hr_modal") {
+        return interaction.reply({ content: "Order not found.", flags: MessageFlags.Ephemeral });
+    }
+    const member = interaction.member;
+    const staff = canManageOrder(member, order);
+    if (kind === "order_hr_modal") {
+        if (!staff) return interaction.reply({ content: "You cannot assign HR to this order.", flags: MessageFlags.Ephemeral });
+        const raw = interaction.fields.getTextInputValue("hr_user").trim();
+        const userId = raw.match(/\d{15,22}/)?.[0];
+        if (!userId) return interaction.reply({ content: "Provide a valid member ID or mention.", flags: MessageFlags.Ephemeral });
+        const target = await interaction.guild.members.fetch(userId).catch(() => null);
+        if (!target || !ORDER_HR_ROLE_IDS.some(id => target.roles.cache.has(id))) {
+            return interaction.reply({ content: "That member does not have an authorised HR role.", flags: MessageFlags.Ephemeral });
+        }
+        const previous = order.hrAssigned;
+        order.hrAssigned = target.id;
+        if (["Submitted", "Claimed"].includes(order.stage)) order.stage = "HR Assigned";
+        order.status = order.stage;
+        order.statusHistory.push({ status: `HR assigned: ${target.id}`, by: interaction.user.id, at: Date.now() });
+        await interaction.channel.permissionOverwrites.edit(target.id, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true, AttachFiles: true, EmbedLinks: true });
+        if (previous && previous !== target.id) await interaction.channel.permissionOverwrites.delete(previous).catch(() => {});
+        saveOrders();
+        await interaction.reply({ content: `👑 ${target} is now assigned as HR for **${order.id}**.` });
+        await updateOrderProgress(interaction.channel, order);
+        await sendOrderLog("👑 HR Assigned / Transferred", `**Order:** ${order.id}\n**Previous HR:** ${previous ? `<@${previous}>` : "None"}\n**New HR:** ${target}\n**By:** ${interaction.user}`);
+        return;
+    }
+    if (kind === "order_revision_modal") {
+        if (interaction.user.id !== order.userId) return interaction.reply({ content: "Only the customer can request a revision.", flags: MessageFlags.Ephemeral });
+        const revision = safeText(interaction.fields.getTextInputValue("revision"), 1000);
+        order.revisions.push({ text: revision, by: interaction.user.id, at: Date.now() });
+        if (order.stage === "Delivered") order.stage = "In Progress";
+        order.status = order.stage;
+        order.statusHistory.push({ status: "Revision requested", by: interaction.user.id, at: Date.now() });
+        saveOrders();
+        await interaction.reply({ content: "📝 Your revision request has been sent to the order team.", flags: MessageFlags.Ephemeral });
+        await interaction.channel.send(`📝 **Revision requested by ${interaction.user}:**\n${revision}`);
+        await updateOrderProgress(interaction.channel, order);
+        return sendOrderLog("📝 Revision Requested", `**Order:** ${order.id}\n**Customer:** <@${order.userId}>\n**Request:** ${revision}`);
+    }
+    if (!staff) return interaction.reply({ content: "Only authorised order staff or HR can use this action.", flags: MessageFlags.Ephemeral });
+    if (kind === "order_notes_modal") {
+        const note = safeText(interaction.fields.getTextInputValue("note"), 1000);
+        order.notes.push({ text: note, by: interaction.user.id, at: Date.now() });
+        saveOrders();
+        await interaction.reply({ content: "🗒️ Staff note saved.", flags: MessageFlags.Ephemeral });
+        return sendOrderLog("🗒️ Internal Order Note", `**Order:** ${order.id}\n**Staff:** ${interaction.user}\n**Note:** ${note}`);
+    }
+    if (kind === "order_info_modal") {
+        const request = safeText(interaction.fields.getTextInputValue("request"), 1000);
+        await interaction.reply({ content: "Information request sent to the customer.", flags: MessageFlags.Ephemeral });
+        await interaction.channel.send(`<@${order.userId}> **Additional information requested:**\n${request}`);
+        return sendOrderLog("❔ Order Information Requested", `**Order:** ${order.id}\n**By:** ${interaction.user}\n**Request:** ${request}`);
+    }
+}
+
+async function handleOrderSelect(interaction) {
+    if (interaction.customId === "order_category_select") {
+        const category = interaction.values[0];
+        if (!ORDER_CATEGORIES[category]) return interaction.reply({ content: "Invalid order category.", flags: MessageFlags.Ephemeral });
+        const status = orderData.services[category] || "open";
+        if (status === "closed") return interaction.reply({ content: "This service is currently closed.", flags: MessageFlags.Ephemeral });
+        return interaction.showModal(buildOrderModal(category, interaction.user.id));
+    }
+    const order = orderData.orders[interaction.channelId];
+    if (!order) return interaction.reply({ content: "Order not found in this channel.", flags: MessageFlags.Ephemeral });
+    if (!canManageOrder(interaction.member, order)) return interaction.reply({ content: "You cannot update this order.", flags: MessageFlags.Ephemeral });
+    if (interaction.customId === "order_status_select") {
+        const stage = interaction.values[0];
+        order.stage = stage; order.status = stage;
+        order.statusHistory.push({ status: stage, by: interaction.user.id, at: Date.now() });
+        saveOrders();
+        await interaction.update({ content: `Order **${order.id}** updated to **${stage}**.`, components: [] });
+        await updateOrderProgress(interaction.channel, order);
+        await sendOrderLog("📊 Order Status Updated", `**Order:** ${order.id}\n**Status:** ${stage}\n**By:** ${interaction.user}`);
+        return;
+    }
+    if (interaction.customId === "order_payment_select") {
+        const payment = interaction.values[0];
+        order.payment = payment;
+        order.paymentHistory ||= [];
+        order.paymentHistory.push({ status: payment, by: interaction.user.id, at: Date.now() });
+        saveOrders();
+        await interaction.update({ content: `Payment status for **${order.id}** set to **${payment}**.`, components: [] });
+        await interaction.channel.send(`💳 Payment status updated: **${payment}**.`);
+        return sendOrderLog("💳 Order Payment Updated", `**Order:** ${order.id}\n**Payment:** ${payment}\n**By:** ${interaction.user}`);
+    }
+}
+
+
+async function myOrdersCommand(interaction) {
+    const orders = Object.values(orderData.orders)
+        .filter(order => order.userId === interaction.user.id && order.guildId === interaction.guild.id)
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, 10);
+    if (!orders.length) return interaction.reply({ content: "You do not have any saved orders yet.", flags: MessageFlags.Ephemeral });
+    const embed = new EmbedBuilder().setColor(0x5865F2).setTitle("🛍️ Your Orders")
+        .setDescription(orders.map(order => `**${order.id}** • ${ORDER_CATEGORIES[order.category]?.label || order.category}\nStatus: **${order.stage}** • Payment: **${order.payment}**\nTicket: ${order.closedAt ? "Closed" : `<#${order.channelId}>`}`).join("\n\n"))
+        .setFooter({ text: "Showing your 10 most recent orders" }).setTimestamp();
+    return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+}
+
+async function orderInfoCommand(interaction) {
+    const orderId = interaction.options.getString("order_id").trim().toUpperCase();
+    const order = Object.values(orderData.orders).find(item => item.id === orderId && item.guildId === interaction.guild.id);
+    if (!order) return interaction.reply({ content: "Order ID not found.", flags: MessageFlags.Ephemeral });
+    if (order.userId !== interaction.user.id && !canManageOrder(interaction.member, order)) {
+        return interaction.reply({ content: "You cannot view this order.", flags: MessageFlags.Ephemeral });
+    }
+    const embed = new EmbedBuilder().setColor(0x5865F2).setTitle(`ℹ️ Order Information • ${order.id}`)
+        .addFields(
+            { name: "Customer", value: `<@${order.userId}>`, inline: true },
+            { name: "Category", value: ORDER_CATEGORIES[order.category]?.label || order.category, inline: true },
+            { name: "Stage", value: order.stage, inline: true },
+            { name: "Payment", value: order.payment, inline: true },
+            { name: "Assigned Staff", value: order.claimedBy ? `<@${order.claimedBy}>` : "Unclaimed", inline: true },
+            { name: "Assigned HR", value: order.hrAssigned ? `<@${order.hrAssigned}>` : "Not assigned", inline: true },
+            { name: "Created", value: `<t:${Math.floor(order.createdAt / 1000)}:F>`, inline: false },
+            { name: "Ticket", value: order.closedAt ? "Closed" : `<#${order.channelId}>`, inline: true }
+        ).setTimestamp();
+    return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+}
+
+async function orderCancelCommand(interaction) {
+    const order = Object.values(orderData.orders).find(item => item.userId === interaction.user.id && item.guildId === interaction.guild.id && !item.closedAt && item.stage !== "Completed");
+    if (!order) return interaction.reply({ content: "You do not have an active order to request cancellation for.", flags: MessageFlags.Ephemeral });
+    order.cancellationRequested = { by: interaction.user.id, at: Date.now() };
+    saveOrders();
+    const channel = await client.channels.fetch(order.channelId).catch(() => null);
+    if (channel?.isTextBased()) await channel.send(`⚠️ <@${order.userId}> has requested cancellation of **${order.id}**. Staff/management must review this request.`);
+    await sendOrderLog("⚠️ Order Cancellation Requested", `**Order:** ${order.id}\n**Customer:** ${interaction.user}`);
+    return interaction.reply({ content: `Your cancellation request for **${order.id}** has been sent to staff. The order is not cancelled until reviewed.`, flags: MessageFlags.Ephemeral });
+}
+
+async function setOrderServiceStatus(interaction) {
+    if (!isStaff(interaction.member)) return interaction.reply({ content: "You need management permissions to change service availability.", flags: MessageFlags.Ephemeral });
+    const category = interaction.options.getString("category");
+    const status = interaction.options.getString("status");
+    orderData.services[category] = status;
+    saveOrders();
+    await interaction.reply({ content: `✅ **${ORDER_CATEGORIES[category].label}** is now **${status.toUpperCase()}**.`, flags: MessageFlags.Ephemeral });
+    const panelChannel = await client.channels.fetch(ORDER_PANEL_CHANNEL_ID).catch(() => null);
+    if (panelChannel?.isTextBased()) {
+        const recent = await panelChannel.messages.fetch({ limit: 50 }).catch(() => null);
+        const panel = recent?.find(m => m.author.id === client.user.id && m.embeds.some(e => e.title === "🛍️ AKSH'S ADVERTISING • ORDER CENTRE"));
+        if (panel) {
+            const descriptions = Object.entries(ORDER_CATEGORIES).map(([key, item]) => {
+                const state = orderData.services[key];
+                return `${item.emoji} **${item.label}** — ${state === "open" ? "🟢 Open" : state === "limited" ? "🟡 Limited" : "🔴 Closed"}`;
+            }).join("\n");
+            const embed = EmbedBuilder.from(panel.embeds[0]).setDescription("Welcome to our order centre. Select a service below to submit a request. Each order receives a private ticket and a unique tracking ID.\n\n### Available Services\n" + descriptions + "\n\n### Before Ordering\n• Provide clear requirements and references.\n• Budgets and deadlines are reviewed by staff.\n• Payment proofs are checked manually.\n• Do not submit duplicate orders.");
+            await panel.edit({ embeds: [embed] });
+        }
+    }
+}
+
+
 // ======================================================
 // PARTNERSHIP
 // ======================================================
@@ -4206,6 +4756,25 @@ const APPLICATIONS = {
             ["Ultimate Case", "Why should the Founders select you for an executive promotion?", true]
         ]
     }
+,
+    designer: {
+        label: "Designer",
+        reviewerRoles: APPLICATION_REVIEWERS.shr,
+        questions: [
+            ["Discord Username", "What is your Discord username?", true],
+            ["Preferred Name", "What name should the team use for you?", true],
+            ["Design Experience", "How long have you been designing?", true],
+            ["Software", "Which design software do you use (Photoshop, Canva, Photopea, etc.)?", true],
+            ["Design Types", "What types of designs can you create?", true],
+            ["Skill Rating", "Rate your design skills from 1 to 10 and explain your rating.", true],
+            ["Portfolio", "Provide links to at least three examples of your previous work. A portfolio is required.", true],
+            ["Services", "Can you create custom GFX, banners, logos and Discord embeds? Explain what you can deliver.", true],
+            ["Availability", "How much time can you dedicate to design work each week?", true],
+            ["Revisions", "A customer requests several changes. How would you handle revisions professionally?", true],
+            ["Design Quality", "What makes a design effective and stand out?", true],
+            ["Why Aksh's Services?", "Why do you want to become a Designer at Aksh's Advertising?", true]
+        ]
+    }
 };
 
 function applicationPages(type) {
@@ -4242,7 +4811,7 @@ async function showApplicationPanel() {
     if (!channel?.isTextBased()) return;
     const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
     const existing = recent?.find(m => m.author.id === client.user.id && m.embeds.some(e => e.title === "📝 Staff Applications"));
-    if (existing) return;
+    if (existing) await existing.delete().catch(() => {});
     const embed = new EmbedBuilder()
         .setColor(0x5865F2)
         .setTitle("📝 Staff Applications")
@@ -4251,7 +4820,8 @@ async function showApplicationPanel() {
             { name: "🟢 Low Rank", value: "Entry-level moderation and community duties.", inline: true },
             { name: "🛟 Support Staff", value: "Assist members and handle support requests.", inline: true },
             { name: "👑 High Rank", value: "Leadership, supervision and staff management.", inline: true },
-            { name: "⭐ Senior High Rank", value: "Executive leadership and server oversight.", inline: true }
+            { name: "⭐ Senior High Rank", value: "Executive leadership and server oversight.", inline: true },
+            { name: "🎨 Designer", value: "Create GFX, banners, logos, clothing and other digital designs.", inline: true }
         )
         .setFooter({ text: "Aksh's Advertising • Staff Applications" })
         .setTimestamp();
@@ -4262,7 +4832,8 @@ async function showApplicationPanel() {
             { label: "Low Rank", value: "lr", description: "Apply for a Low Rank position", emoji: "🟢" },
             { label: "Support Staff", value: "support", description: "Apply for Support Staff", emoji: "🛟" },
             { label: "High Rank", value: "hr", description: "Apply for a High Rank position", emoji: "👑" },
-            { label: "Senior High Rank", value: "shr", description: "Apply for Senior High Rank", emoji: "⭐" }
+            { label: "Senior High Rank", value: "shr", description: "Apply for Senior High Rank", emoji: "⭐" },
+            { label: "Designer", value: "designer", description: "Apply to join the design team", emoji: "🎨" }
         );
     await channel.send({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)] });
 }
@@ -4312,9 +4883,34 @@ async function handleApplicationModal(interaction) {
         embed.addFields({ name: question[0].slice(0, 256), value: answer || "Not provided", inline: false });
     });
     const roleMentions = config.reviewerRoles.map(id => `<@&${id}>`).join(" ");
-    await channel.send({ content: `New **${config.label}** application from ${interaction.user}.\n${roleMentions}`, embeds: [embed], allowedMentions: { users: [], roles: config.reviewerRoles, parse: [] } });
+    const reviewComponents = type === "designer" ? [new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`designer_approve:${interaction.user.id}`).setLabel("Approve Designer").setEmoji("✅").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`designer_reject:${interaction.user.id}`).setLabel("Reject").setEmoji("❌").setStyle(ButtonStyle.Danger)
+    )] : [];
+    await channel.send({ content: `New **${config.label}** application from ${interaction.user}.\n${roleMentions}`, embeds: [embed], components: reviewComponents, allowedMentions: { users: [], roles: config.reviewerRoles, parse: [] } });
     applicationDrafts.delete(key);
     return interaction.reply({ content: `✅ Your **${config.label}** application has been submitted successfully.`, flags: MessageFlags.Ephemeral });
+}
+
+
+async function handleDesignerReview(interaction) {
+    const [action, applicantId] = interaction.customId.split(":");
+    const allowed = APPLICATION_REVIEWERS.shr.some(id => interaction.member.roles.cache.has(id)) || isOwner(interaction.member);
+    if (!allowed) return interaction.reply({ content: "Only the designated application reviewers can review Designer applications.", flags: MessageFlags.Ephemeral });
+    const applicant = await interaction.guild.members.fetch(applicantId).catch(() => null);
+    if (action === "designer_approve") {
+        if (!applicant) return interaction.reply({ content: "The applicant is no longer in this server. The application cannot be approved.", flags: MessageFlags.Ephemeral });
+        const failed = [];
+        for (const roleId of DESIGNER_REWARD_ROLE_IDS) {
+            try { await applicant.roles.add(roleId, "Designer application approved"); }
+            catch (error) { failed.push(roleId); console.error("Designer role assignment failed:", error); }
+        }
+        await interaction.update({ content: `✅ Designer application approved by ${interaction.user}. ${applicant} ${failed.length ? `Some roles could not be assigned: ${failed.join(", ")}` : "received both Designer reward roles."}`, components: [] });
+        await applicant.send("Your Designer application at Aksh's Advertising has been approved. Welcome to the design team!").catch(() => {});
+        return;
+    }
+    await interaction.update({ content: `❌ Designer application rejected by ${interaction.user}.`, components: [] });
+    if (applicant) await applicant.send("Thank you for applying to the Designer team at Aksh's Advertising. Your application was not approved at this time.").catch(() => {});
 }
 
 // ======================================================
@@ -4420,6 +5016,27 @@ async function handleTimezoneSelect(interaction) {
 // ======================================================
 
 const commands = [];
+
+commands.push(
+    new SlashCommandBuilder()
+        .setName("servicestatus")
+        .setDescription("Change order service availability")
+        .addStringOption(option => option.setName("category").setDescription("Service category").setRequired(true).addChoices(
+            ...Object.entries(ORDER_CATEGORIES).map(([value, item]) => ({ name: item.label, value }))
+        ))
+        .addStringOption(option => option.setName("status").setDescription("Availability").setRequired(true).addChoices(
+            { name: "Open", value: "open" },
+            { name: "Limited", value: "limited" },
+            { name: "Closed", value: "closed" }
+        ))
+);
+
+commands.push(
+    new SlashCommandBuilder().setName("myorders").setDescription("View your recent orders"),
+    new SlashCommandBuilder().setName("orderinfo").setDescription("View an order's information")
+        .addStringOption(option => option.setName("order_id").setDescription("Order ID, e.g. AKS-0001").setRequired(true)),
+    new SlashCommandBuilder().setName("ordercancel").setDescription("Request cancellation of your active order")
+);
 
 // Partnership
 commands.push(
@@ -4950,6 +5567,9 @@ client.once(
         // Automatic verification panel
         await setupVerificationPanel();
 
+        // Automatic order panel
+        await sendOrderPanel();
+
         // Applications and timezone roles/panel
         await showApplicationPanel();
         await ensureTimezoneRoles(guild);
@@ -5109,6 +5729,18 @@ client.on(
                         return createPartnership(
                             interaction
                         );
+
+                    case "servicestatus":
+                        return setOrderServiceStatus(interaction);
+
+                    case "myorders":
+                        return myOrdersCommand(interaction);
+
+                    case "orderinfo":
+                        return orderInfoCommand(interaction);
+
+                    case "ordercancel":
+                        return orderCancelCommand(interaction);
 
                     case "promote":
                         return promoteMember(
@@ -5324,11 +5956,27 @@ client.on(
                 return handleApplicationModal(interaction);
             }
 
+            if (interaction.isModalSubmit() && interaction.customId.startsWith("order_modal:")) {
+                return handleOrderModal(interaction);
+            }
+
+            if (interaction.isModalSubmit() && /^(order_hr_modal|order_revision_modal|order_notes_modal|order_info_modal):/.test(interaction.customId)) {
+                return handleOrderModalSubmit(interaction);
+            }
+
             // ==================================================
             // BUTTONS
             // ==================================================
 
             if (interaction.isButton()) {
+                if (interaction.customId.startsWith("designer_approve:") || interaction.customId.startsWith("designer_reject:")) {
+                    return handleDesignerReview(interaction);
+                }
+
+                if (interaction.customId.startsWith("order_")) {
+                    return handleOrderButton(interaction);
+                }
+
                 if (interaction.customId.startsWith("application_continue:")) {
                     const [, type, pageText, ownerId] = interaction.customId.split(":");
                     const page = Number(pageText);
@@ -5490,6 +6138,10 @@ client.on(
             if (
                 interaction.isStringSelectMenu()
             ) {
+                if (interaction.customId === "order_category_select" || interaction.customId === "order_status_select" || interaction.customId === "order_payment_select") {
+                    return handleOrderSelect(interaction);
+                }
+
                 if (interaction.customId === "application_select") {
                     const type = interaction.values[0];
                     applicationDrafts.delete(`${interaction.user.id}:${type}`);
