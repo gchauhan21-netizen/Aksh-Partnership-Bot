@@ -1701,7 +1701,7 @@ async function economyDaily(interaction) {
     const u = economyUser(interaction.user.id); const now = Date.now(); const day = 86400000;
     if (u.lastDaily && now - u.lastDaily < day) {
         const remaining = day - (now - u.lastDaily);
-        return interaction.reply({ content: `⏳ You have already claimed today's reward. Try again <t:${Math.floor((now + remaining)/1000)}:R>.`, flags: MessageFlags.Ephemeral });
+        return interaction.reply({ content: `⏳ You have already claimed today's reward. Try again <t:${Math.floor((now + remaining) / 1000)}:R>.`, flags: MessageFlags.Ephemeral });
     }
     u.dailyStreak = u.lastDaily && now - u.lastDaily < day * 2 ? u.dailyStreak + 1 : 1;
     u.lastDaily = now; const reward = 500 + Math.min(u.dailyStreak - 1, 7) * 50;
@@ -1710,7 +1710,7 @@ async function economyDaily(interaction) {
 }
 async function economyShop(interaction) {
     const embed = new EmbedBuilder().setColor(0xF1C40F).setTitle("🛒 Aksh's Coins Shop")
-        .setDescription(Object.entries(ECONOMY_SHOP).map(([id,item]) => `**${item.name}** — 🪙 ${item.price.toLocaleString()}\n${item.description}\nUse \/buy item:${id}`).join("\n\n"))
+        .setDescription(Object.entries(ECONOMY_SHOP).map(([id, item]) => `**${item.name}** — 🪙 ${item.price.toLocaleString()}\n${item.description}\nUse \/buy item:${id}`).join("\n\n"))
         .setFooter({ text: "Items are vouchers and require staff redemption where applicable." });
     return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
@@ -1718,18 +1718,18 @@ async function economyBuy(interaction) {
     const id = interaction.options.getString("item"); const item = ECONOMY_SHOP[id];
     if (!item) return interaction.reply({ content: "That shop item does not exist.", flags: MessageFlags.Ephemeral });
     const u = economyUser(interaction.user.id);
-    if (u.coins < item.price) return interaction.reply({ content: `You need **${(item.price-u.coins).toLocaleString()}** more Aksh's Coins.`, flags: MessageFlags.Ephemeral });
+    if (u.coins < item.price) return interaction.reply({ content: `You need **${(item.price - u.coins).toLocaleString()}** more Aksh's Coins.`, flags: MessageFlags.Ephemeral });
     u.coins -= item.price; u.inventory.push({ id, purchasedAt: Date.now(), redeemed: false }); saveEconomy();
     return interaction.reply({ content: `✅ Purchased **${item.name}** for **${item.price.toLocaleString()} Aksh's Coins**. Use \/inventory to view your voucher.`, flags: MessageFlags.Ephemeral });
 }
 async function economyInventory(interaction) {
     const u = economyUser(interaction.user.id);
-    const items = u.inventory.map((x,i) => `**${i+1}.** ${ECONOMY_SHOP[x.id]?.name || x.id} — ${x.redeemed ? "Redeemed" : "Unused"}`).join("\n");
+    const items = u.inventory.map((x, i) => `**${i + 1}.** ${ECONOMY_SHOP[x.id]?.name || x.id} — ${x.redeemed ? "Redeemed" : "Unused"}`).join("\n");
     return interaction.reply({ content: items ? `🎒 **Your Inventory**\n${items}` : "Your inventory is empty.", flags: MessageFlags.Ephemeral });
 }
 async function economyLeaderboard(interaction) {
-    const top = Object.entries(economyData.users).sort((a,b)=>(b[1].coins||0)-(a[1].coins||0)).slice(0,10);
-    const lines = await Promise.all(top.map(async ([id,u],i) => `${i+1}. <@${id}> — 🪙 ${(u.coins||0).toLocaleString()} coins`));
+    const top = Object.entries(economyData.users).sort((a, b) => (b[1].coins || 0) - (a[1].coins || 0)).slice(0, 10);
+    const lines = await Promise.all(top.map(async ([id, u], i) => `${i + 1}. <@${id}> — 🪙 ${(u.coins || 0).toLocaleString()} coins`));
     return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xF1C40F).setTitle("🏆 Aksh's Coins Leaderboard").setDescription(lines.join("\n") || "No balances yet.")], flags: MessageFlags.Ephemeral });
 }
 async function economyGrant(interaction, currency) {
@@ -1743,9 +1743,9 @@ async function economyReward(interaction) {
     const type = interaction.options.getString("type"); const user = interaction.options.getUser("user"); const reason = interaction.options.getString("reason");
     const amount = TOKEN_REWARDS[type];
     const claimKey = `${type}:${user.id}:${interaction.id}`;
-    addTokens(user.id, amount); economyData.rewardClaims[claimKey] = { type, userId:user.id, amount, by:interaction.user.id, reason, at:Date.now() }; saveEconomy();
-    const log = await client.channels.fetch(TICKET_LOG_CHANNEL_ID).catch(()=>null);
-    if (log?.isTextBased()) await log.send({ embeds:[new EmbedBuilder().setColor(0x57F287).setTitle("🎟️ Tokens Awarded").setDescription(`${user} received **${amount} tokens** for **${type}**.\n**Approved by:** ${interaction.user}\n**Reason:** ${safeText(reason,500)}`).setTimestamp()] });
+    addTokens(user.id, amount); economyData.rewardClaims[claimKey] = { type, userId: user.id, amount, by: interaction.user.id, reason, at: Date.now() }; saveEconomy();
+    const log = await client.channels.fetch(TICKET_LOG_CHANNEL_ID).catch(() => null);
+    if (log?.isTextBased()) await log.send({ embeds: [new EmbedBuilder().setColor(0x57F287).setTitle("🎟️ Tokens Awarded").setDescription(`${user} received **${amount} tokens** for **${type}**.\n**Approved by:** ${interaction.user}\n**Reason:** ${safeText(reason, 500)}`).setTimestamp()] });
     return interaction.reply({ content: `✅ Awarded **${amount} tokens** to ${user} for ${type}.`, flags: MessageFlags.Ephemeral });
 }
 
@@ -1867,13 +1867,13 @@ function buildOrderButtons(order) {
 async function updateOrderProgress(channel, order) {
     if (!order.progressMessageId) return;
     const msg = await channel.messages.fetch(order.progressMessageId).catch(() => null);
-    if (msg) await msg.edit({ embeds: [orderProgressEmbed(order)] }).catch(() => {});
+    if (msg) await msg.edit({ embeds: [orderProgressEmbed(order)] }).catch(() => { });
 }
 
 async function sendOrderLog(title, description, color = 0x5865F2) {
     const channel = await client.channels.fetch(TICKET_LOG_CHANNEL_ID).catch(() => null);
     if (!channel?.isTextBased()) return;
-    await channel.send({ embeds: [new EmbedBuilder().setColor(color).setTitle(title).setDescription(description).setTimestamp()] }).catch(() => {});
+    await channel.send({ embeds: [new EmbedBuilder().setColor(color).setTitle(title).setDescription(description).setTimestamp()] }).catch(() => { });
 }
 
 async function migrateOrderControlMessages() {
@@ -2009,7 +2009,7 @@ async function handleOrderModal(interaction) {
 async function refreshOrderControls(interaction, order) {
     const messages = await interaction.channel.messages.fetch({ limit: 30 }).catch(() => null);
     const controlMessage = messages?.find(m => m.author.id === client.user.id && m.components.length && m.components.some(row => row.components.some(c => c.customId?.startsWith("order_"))));
-    if (controlMessage) await controlMessage.edit({ components: buildOrderButtons(order) }).catch(() => {});
+    if (controlMessage) await controlMessage.edit({ components: buildOrderButtons(order) }).catch(() => { });
 }
 
 async function handleOrderButton(interaction) {
@@ -2060,7 +2060,7 @@ async function handleOrderButton(interaction) {
             if (order.stage === "HR Assigned") order.stage = order.claimedBy ? "Claimed" : "Submitted";
             order.status = order.stage;
             order.statusHistory.push({ status: "HR assignment removed", by: interaction.user.id, at: Date.now() });
-            await interaction.channel.permissionOverwrites.delete(old).catch(() => {});
+            await interaction.channel.permissionOverwrites.delete(old).catch(() => { });
             saveOrders();
             await interaction.reply({ content: `HR assignment removed from <@${old}>.` });
             await updateOrderProgress(interaction.channel, order);
@@ -2133,7 +2133,7 @@ async function handleOrderButton(interaction) {
             fs.writeFileSync(filepath, messages.reverse().join("\n") || "No messages.");
             await interaction.editReply({ content: `Transcript for ${order.id}:`, files: [filepath] });
             await sendOrderLog("📄 Order Transcript", `**Order:** ${order.id}\n**Requested by:** ${interaction.user}`);
-            setTimeout(() => { try { fs.unlinkSync(filepath); } catch {} }, 15000);
+            setTimeout(() => { try { fs.unlinkSync(filepath); } catch { } }, 15000);
             return;
         }
         case "order_close": {
@@ -2142,7 +2142,7 @@ async function handleOrderButton(interaction) {
             await interaction.reply({ content: "🔒 This order ticket will close in 5 seconds.", flags: MessageFlags.Ephemeral });
             order.closedAt = Date.now(); saveOrders();
             await sendOrderLog("🔒 Order Ticket Closed", `**Order:** ${order.id}\n**Closed by:** ${interaction.user}`);
-            setTimeout(() => interaction.channel.delete("Order ticket closed").catch(() => {}), 5000);
+            setTimeout(() => interaction.channel.delete("Order ticket closed").catch(() => { }), 5000);
             return;
         }
     }
@@ -2171,7 +2171,7 @@ async function handleOrderModalSubmit(interaction) {
         order.status = order.stage;
         order.statusHistory.push({ status: `HR assigned: ${target.id}`, by: interaction.user.id, at: Date.now() });
         await interaction.channel.permissionOverwrites.edit(target.id, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true, AttachFiles: true, EmbedLinks: true });
-        if (previous && previous !== target.id) await interaction.channel.permissionOverwrites.delete(previous).catch(() => {});
+        if (previous && previous !== target.id) await interaction.channel.permissionOverwrites.delete(previous).catch(() => { });
         saveOrders();
         await interaction.reply({ content: `👑 ${target} is now assigned as HR for **${order.id}**.` });
         await updateOrderProgress(interaction.channel, order);
@@ -2251,17 +2251,17 @@ async function orderActionCommand(interaction) {
     if (action === "revision") {
         if (!customer) return interaction.reply({ content: "Only the customer can request a revision.", flags: MessageFlags.Ephemeral });
         const text = interaction.options.getString("text");
-        if (!text?.trim()) return interaction.reply({content:"Provide the revision details in the text option.",flags:MessageFlags.Ephemeral});
-        order.revisions ||= []; order.revisions.push({text,by:interaction.user.id,at:Date.now()});
+        if (!text?.trim()) return interaction.reply({ content: "Provide the revision details in the text option.", flags: MessageFlags.Ephemeral });
+        order.revisions ||= []; order.revisions.push({ text, by: interaction.user.id, at: Date.now() });
         if (order.stage === "Delivered") order.stage = "In Progress"; order.status = order.stage; saveOrders();
-        const ch = await client.channels.fetch(order.channelId).catch(()=>null); if (ch?.isTextBased()) await ch.send(`📝 Revision requested by <@${interaction.user.id}>: ${safeText(text,1000)}`);
-        return interaction.reply({content:`Revision request added to **${order.id}**.`,flags:MessageFlags.Ephemeral});
+        const ch = await client.channels.fetch(order.channelId).catch(() => null); if (ch?.isTextBased()) await ch.send(`📝 Revision requested by <@${interaction.user.id}>: ${safeText(text, 1000)}`);
+        return interaction.reply({ content: `Revision request added to **${order.id}**.`, flags: MessageFlags.Ephemeral });
     }
     if (action === "complete" && customer) {
-        if (order.stage !== "Delivered") return interaction.reply({content:"You can confirm completion after delivery.",flags:MessageFlags.Ephemeral});
-        order.stage="Completed"; order.status="Completed"; order.completedAt=Date.now(); order.statusHistory.push({status:"Completed",by:interaction.user.id,at:Date.now()}); saveOrders();
-        const ch=await client.channels.fetch(order.channelId).catch(()=>null); if(ch?.isTextBased()) await updateOrderProgress(ch,order);
-        return interaction.reply({content:`✅ **${order.id}** marked Completed.`,flags:MessageFlags.Ephemeral});
+        if (order.stage !== "Delivered") return interaction.reply({ content: "You can confirm completion after delivery.", flags: MessageFlags.Ephemeral });
+        order.stage = "Completed"; order.status = "Completed"; order.completedAt = Date.now(); order.statusHistory.push({ status: "Completed", by: interaction.user.id, at: Date.now() }); saveOrders();
+        const ch = await client.channels.fetch(order.channelId).catch(() => null); if (ch?.isTextBased()) await updateOrderProgress(ch, order);
+        return interaction.reply({ content: `✅ **${order.id}** marked Completed.`, flags: MessageFlags.Ephemeral });
     }
     if (["qcaccept", "qcdeny"].includes(action)) {
         if (!canQualityCheck(interaction.member, order)) return interaction.reply({ content: "Only the matching service/design team or designated QC HR can accept or deny this quality check.", flags: MessageFlags.Ephemeral });
@@ -2283,45 +2283,45 @@ async function orderActionCommand(interaction) {
         return interaction.reply({ content: `Quality Check ${order.qc.result.toLowerCase()} for **${order.id}**.`, flags: MessageFlags.Ephemeral });
     }
     if (!staff) return interaction.reply({ content: "Only authorised order-management roles can use this action.", flags: MessageFlags.Ephemeral });
-    const channel = await client.channels.fetch(order.channelId).catch(()=>null);
-    if (action === "unclaim") { if (!order.claimedBy) return interaction.reply({content:"Order is not claimed.",flags:MessageFlags.Ephemeral}); order.claimedBy=null; if(order.stage==="Claimed")order.stage="Submitted"; }
-    else if (action === "assignhr") { const user=interaction.options.getUser("user"); if(!user)return interaction.reply({content:"Select an HR member.",flags:MessageFlags.Ephemeral}); const member=await interaction.guild.members.fetch(user.id).catch(()=>null); if(!member || !ORDER_HR_ROLE_IDS.some(id=>member.roles.cache.has(id)))return interaction.reply({content:"That member does not have an authorised HR role.",flags:MessageFlags.Ephemeral}); order.hrAssigned=user.id; if(channel?.permissionOverwrites) await channel.permissionOverwrites.edit(user.id,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true}); if(order.stage==="Submitted"||order.stage==="Claimed")order.stage="HR Assigned"; }
-    else if (action === "removehr") { if(!order.hrAssigned)return interaction.reply({content:"No HR member is assigned.",flags:MessageFlags.Ephemeral}); if(channel?.permissionOverwrites)await channel.permissionOverwrites.delete(order.hrAssigned).catch(()=>{}); order.hrAssigned=null; }
-    else if (action === "status") { const stage=interaction.options.getString("value"); if(!ORDER_STAGES.includes(stage))return interaction.reply({content:"Invalid stage.",flags:MessageFlags.Ephemeral}); if(["Quality Check","Delivered","Completed"].includes(stage))return interaction.reply({content:"Use the dedicated QC and completion actions for these stages.",flags:MessageFlags.Ephemeral}); order.stage=stage; }
-    else if (action === "payment") { const value=interaction.options.getString("value"); if(!PAYMENT_STATES.includes(value))return interaction.reply({content:"Invalid payment status.",flags:MessageFlags.Ephemeral}); order.payment=value; }
-    else if (action === "qualitycheck") { if (!["In Progress", "Accepted"].includes(order.stage)) return interaction.reply({content:"Only an accepted or in-progress order can enter Quality Check.",flags:MessageFlags.Ephemeral}); order.stage="Quality Check"; order.qcRequestedAt=Date.now(); }
-    else if (action === "delivered") { return interaction.reply({content:"Use QC Accept to mark an order Delivered.",flags:MessageFlags.Ephemeral}); }
-    else if (action === "note") { const note=interaction.options.getString("text"); if(!note?.trim())return interaction.reply({content:"Provide the staff note in the text option.",flags:MessageFlags.Ephemeral}); order.notes ||= []; order.notes.push({text:note,by:interaction.user.id,at:Date.now()}); }
-    else if (action === "requestinfo") { const text=interaction.options.getString("text"); if(!text?.trim())return interaction.reply({content:"Provide the requested information in the text option.",flags:MessageFlags.Ephemeral}); if(channel?.isTextBased()) await channel.send(`<@${order.userId}> Additional information requested: ${safeText(text,1000)}`); }
+    const channel = await client.channels.fetch(order.channelId).catch(() => null);
+    if (action === "unclaim") { if (!order.claimedBy) return interaction.reply({ content: "Order is not claimed.", flags: MessageFlags.Ephemeral }); order.claimedBy = null; if (order.stage === "Claimed") order.stage = "Submitted"; }
+    else if (action === "assignhr") { const user = interaction.options.getUser("user"); if (!user) return interaction.reply({ content: "Select an HR member.", flags: MessageFlags.Ephemeral }); const member = await interaction.guild.members.fetch(user.id).catch(() => null); if (!member || !ORDER_HR_ROLE_IDS.some(id => member.roles.cache.has(id))) return interaction.reply({ content: "That member does not have an authorised HR role.", flags: MessageFlags.Ephemeral }); order.hrAssigned = user.id; if (channel?.permissionOverwrites) await channel.permissionOverwrites.edit(user.id, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true }); if (order.stage === "Submitted" || order.stage === "Claimed") order.stage = "HR Assigned"; }
+    else if (action === "removehr") { if (!order.hrAssigned) return interaction.reply({ content: "No HR member is assigned.", flags: MessageFlags.Ephemeral }); if (channel?.permissionOverwrites) await channel.permissionOverwrites.delete(order.hrAssigned).catch(() => { }); order.hrAssigned = null; }
+    else if (action === "status") { const stage = interaction.options.getString("value"); if (!ORDER_STAGES.includes(stage)) return interaction.reply({ content: "Invalid stage.", flags: MessageFlags.Ephemeral }); if (["Quality Check", "Delivered", "Completed"].includes(stage)) return interaction.reply({ content: "Use the dedicated QC and completion actions for these stages.", flags: MessageFlags.Ephemeral }); order.stage = stage; }
+    else if (action === "payment") { const value = interaction.options.getString("value"); if (!PAYMENT_STATES.includes(value)) return interaction.reply({ content: "Invalid payment status.", flags: MessageFlags.Ephemeral }); order.payment = value; }
+    else if (action === "qualitycheck") { if (!["In Progress", "Accepted"].includes(order.stage)) return interaction.reply({ content: "Only an accepted or in-progress order can enter Quality Check.", flags: MessageFlags.Ephemeral }); order.stage = "Quality Check"; order.qcRequestedAt = Date.now(); }
+    else if (action === "delivered") { return interaction.reply({ content: "Use QC Accept to mark an order Delivered.", flags: MessageFlags.Ephemeral }); }
+    else if (action === "note") { const note = interaction.options.getString("text"); if (!note?.trim()) return interaction.reply({ content: "Provide the staff note in the text option.", flags: MessageFlags.Ephemeral }); order.notes ||= []; order.notes.push({ text: note, by: interaction.user.id, at: Date.now() }); }
+    else if (action === "requestinfo") { const text = interaction.options.getString("text"); if (!text?.trim()) return interaction.reply({ content: "Provide the requested information in the text option.", flags: MessageFlags.Ephemeral }); if (channel?.isTextBased()) await channel.send(`<@${order.userId}> Additional information requested: ${safeText(text, 1000)}`); }
     else if (action === "transcript") {
-        await interaction.deferReply({flags:MessageFlags.Ephemeral}); const msgs=[]; let before;
-        for(let i=0;i<10;i++){const batch=await channel?.messages.fetch({limit:100,...(before?{before}:{})}).catch(()=>null);if(!batch?.size)break;msgs.push(...batch.map(m=>`[${m.createdAt.toISOString()}] ${m.author.tag}: ${m.content}`));before=batch.last().id;if(batch.size<100)break;}
-        const filepath=path.join(DATA_DIR,`order-transcript-${order.id}.txt`);fs.writeFileSync(filepath,msgs.reverse().join("\\n")||"No messages.");await interaction.editReply({content:`Transcript for ${order.id}:`,files:[filepath]});setTimeout(()=>{try{fs.unlinkSync(filepath)}catch{}},15000);return;
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral }); const msgs = []; let before;
+        for (let i = 0; i < 10; i++) { const batch = await channel?.messages.fetch({ limit: 100, ...(before ? { before } : {}) }).catch(() => null); if (!batch?.size) break; msgs.push(...batch.map(m => `[${m.createdAt.toISOString()}] ${m.author.tag}: ${m.content}`)); before = batch.last().id; if (batch.size < 100) break; }
+        const filepath = path.join(DATA_DIR, `order-transcript-${order.id}.txt`); fs.writeFileSync(filepath, msgs.reverse().join("\\n") || "No messages."); await interaction.editReply({ content: `Transcript for ${order.id}:`, files: [filepath] }); setTimeout(() => { try { fs.unlinkSync(filepath) } catch { } }, 15000); return;
     }
-    else if (action === "complete") { order.stage="Completed"; order.completedAt=Date.now(); }
-    else return interaction.reply({content:"Unsupported order action.",flags:MessageFlags.Ephemeral});
-    order.status=order.stage; order.statusHistory ||= []; order.statusHistory.push({status:action,by:interaction.user.id,at:Date.now()}); saveOrders();
-    if(channel?.isTextBased()) await updateOrderProgress(channel,order);
-    if(channel?.isTextBased() && ["delivered","status","payment","unclaim","assignhr","removehr"].includes(action)) await channel.send(`🛠️ **${order.id}**: ${action} updated by ${interaction.user}.`);
-    return interaction.reply({content:`✅ **${order.id}** updated (${action}).`,flags:MessageFlags.Ephemeral});
+    else if (action === "complete") { order.stage = "Completed"; order.completedAt = Date.now(); }
+    else return interaction.reply({ content: "Unsupported order action.", flags: MessageFlags.Ephemeral });
+    order.status = order.stage; order.statusHistory ||= []; order.statusHistory.push({ status: action, by: interaction.user.id, at: Date.now() }); saveOrders();
+    if (channel?.isTextBased()) await updateOrderProgress(channel, order);
+    if (channel?.isTextBased() && ["delivered", "status", "payment", "unclaim", "assignhr", "removehr"].includes(action)) await channel.send(`🛠️ **${order.id}**: ${action} updated by ${interaction.user}.`);
+    return interaction.reply({ content: `✅ **${order.id}** updated (${action}).`, flags: MessageFlags.Ephemeral });
 }
 async function setOrderTokenCost(interaction) {
-    if (!canManageOrders(interaction.member)) return interaction.reply({content:"You are not authorised to configure order token payments.",flags:MessageFlags.Ephemeral});
-    const id=interaction.options.getString("order_id").trim().toUpperCase(); const cost=interaction.options.getInteger("tokens");
-    const order=Object.values(orderData.orders).find(o=>o.id===id && o.guildId===interaction.guildId);
-    if(!order)return interaction.reply({content:"Order not found.",flags:MessageFlags.Ephemeral});
-    order.tokenCost=cost; order.paymentMethod="Tokens"; order.payment="Awaiting Payment"; saveOrders();
-    return interaction.reply({content:`🎟️ **${order.id}** can now be paid with **${cost.toLocaleString()} tokens**.`,flags:MessageFlags.Ephemeral});
+    if (!canManageOrders(interaction.member)) return interaction.reply({ content: "You are not authorised to configure order token payments.", flags: MessageFlags.Ephemeral });
+    const id = interaction.options.getString("order_id").trim().toUpperCase(); const cost = interaction.options.getInteger("tokens");
+    const order = Object.values(orderData.orders).find(o => o.id === id && o.guildId === interaction.guildId);
+    if (!order) return interaction.reply({ content: "Order not found.", flags: MessageFlags.Ephemeral });
+    order.tokenCost = cost; order.paymentMethod = "Tokens"; order.payment = "Awaiting Payment"; saveOrders();
+    return interaction.reply({ content: `🎟️ **${order.id}** can now be paid with **${cost.toLocaleString()} tokens**.`, flags: MessageFlags.Ephemeral });
 }
 async function payOrderWithTokens(interaction) {
-    const id=interaction.options.getString("order_id").trim().toUpperCase(); const order=Object.values(orderData.orders).find(o=>o.id===id && o.guildId===interaction.guildId);
-    if(!order || order.userId!==interaction.user.id)return interaction.reply({content:"That order does not belong to you.",flags:MessageFlags.Ephemeral});
-    if(!order.tokenCost || order.paymentMethod!=="Tokens")return interaction.reply({content:"Token payment has not been enabled for this order. Ask order staff to configure it.",flags:MessageFlags.Ephemeral});
-    if(order.payment==="Approved" || order.payment==="Proof Submitted" || order.payment==="Under Review")return interaction.reply({content:"A payment has already been submitted or approved for this order.",flags:MessageFlags.Ephemeral});
-    const u=economyUser(interaction.user.id); if(u.tokens<order.tokenCost)return interaction.reply({content:`You need **${(order.tokenCost-u.tokens).toLocaleString()}** more tokens.`,flags:MessageFlags.Ephemeral});
-    u.tokens-=order.tokenCost; order.payment="Proof Submitted"; order.paymentHistory ||= []; order.paymentHistory.push({status:"Token payment submitted",by:interaction.user.id,at:Date.now()}); saveEconomy(); saveOrders();
-    const ch=await client.channels.fetch(order.channelId).catch(()=>null); if(ch?.isTextBased())await ch.send(`🎟️ <@${order.userId}> submitted **${order.tokenCost} tokens** for **${order.id}**. Staff must verify and approve the token payment.`);
-    return interaction.reply({content:`🎟️ ${order.tokenCost} tokens have been deducted and submitted for staff verification.`,flags:MessageFlags.Ephemeral});
+    const id = interaction.options.getString("order_id").trim().toUpperCase(); const order = Object.values(orderData.orders).find(o => o.id === id && o.guildId === interaction.guildId);
+    if (!order || order.userId !== interaction.user.id) return interaction.reply({ content: "That order does not belong to you.", flags: MessageFlags.Ephemeral });
+    if (!order.tokenCost || order.paymentMethod !== "Tokens") return interaction.reply({ content: "Token payment has not been enabled for this order. Ask order staff to configure it.", flags: MessageFlags.Ephemeral });
+    if (order.payment === "Approved" || order.payment === "Proof Submitted" || order.payment === "Under Review") return interaction.reply({ content: "A payment has already been submitted or approved for this order.", flags: MessageFlags.Ephemeral });
+    const u = economyUser(interaction.user.id); if (u.tokens < order.tokenCost) return interaction.reply({ content: `You need **${(order.tokenCost - u.tokens).toLocaleString()}** more tokens.`, flags: MessageFlags.Ephemeral });
+    u.tokens -= order.tokenCost; order.payment = "Proof Submitted"; order.paymentHistory ||= []; order.paymentHistory.push({ status: "Token payment submitted", by: interaction.user.id, at: Date.now() }); saveEconomy(); saveOrders();
+    const ch = await client.channels.fetch(order.channelId).catch(() => null); if (ch?.isTextBased()) await ch.send(`🎟️ <@${order.userId}> submitted **${order.tokenCost} tokens** for **${order.id}**. Staff must verify and approve the token payment.`);
+    return interaction.reply({ content: `🎟️ ${order.tokenCost} tokens have been deducted and submitted for staff verification.`, flags: MessageFlags.Ephemeral });
 }
 
 async function myOrdersCommand(interaction) {
@@ -4808,7 +4808,7 @@ const APPLICATIONS = {
             ["Ultimate Case", "Why should the Founders select you for an executive promotion?", true]
         ]
     }
-,
+    ,
     designer: {
         label: "Designer",
         reviewerRoles: APPLICATION_REVIEWERS.shr,
@@ -4872,7 +4872,7 @@ async function showApplicationPanel() {
     if (!channel?.isTextBased()) return;
     const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
     const existing = recent?.find(m => m.author.id === client.user.id && m.embeds.some(e => e.title === "📝 Staff Applications"));
-    if (existing) await existing.delete().catch(() => {});
+    if (existing) await existing.delete().catch(() => { });
     const embed = new EmbedBuilder()
         .setColor(0x5865F2)
         .setTitle("📝 Staff Applications")
@@ -4957,21 +4957,21 @@ async function handleApplicationModal(interaction) {
 async function handleApplicationReview(interaction) {
     const [action, type, applicantId] = interaction.customId.split(":");
     const config = APPLICATIONS[type];
-    if (!config) return interaction.reply({content:"Unknown application type.",flags:MessageFlags.Ephemeral});
+    if (!config) return interaction.reply({ content: "Unknown application type.", flags: MessageFlags.Ephemeral });
     const allowed = config.reviewerRoles.some(id => interaction.member.roles.cache.has(id)) || isOwner(interaction.member);
-    if (!allowed) return interaction.reply({content:"You are not authorised to review this application.",flags:MessageFlags.Ephemeral});
-    const applicant = await interaction.guild.members.fetch(applicantId).catch(()=>null);
+    if (!allowed) return interaction.reply({ content: "You are not authorised to review this application.", flags: MessageFlags.Ephemeral });
+    const applicant = await interaction.guild.members.fetch(applicantId).catch(() => null);
     if (action === "application_approve") {
-        if (!applicant) return interaction.reply({content:"Applicant is no longer in this server.",flags:MessageFlags.Ephemeral});
-        const roles = [...new Set([APPLICATION_STAFF_ROLE_ID, ...(APPLICATION_GRANTED_ROLES[type] || [])])]; const failed=[];
-        for (const roleId of roles) { try { await applicant.roles.add(roleId, `${config.label} application approved`); } catch(e) { failed.push(roleId); console.error("Application role grant failed",e); } }
-        const balance=addTokens(applicantId,TOKEN_REWARDS.application);
-        await interaction.update({content:`✅ ${config.label} application approved by ${interaction.user}. ${applicant} received **90 tokens**.${failed.length?` Roles not assigned: ${failed.join(", ")}`:" All configured roles were assigned."}`,components:[]});
-        await applicant.send(`Your **${config.label}** application at Aksh's Advertising has been approved! You received **90 tokens**. Your token balance is now **${balance}**.`).catch(()=>{});
+        if (!applicant) return interaction.reply({ content: "Applicant is no longer in this server.", flags: MessageFlags.Ephemeral });
+        const roles = [...new Set([APPLICATION_STAFF_ROLE_ID, ...(APPLICATION_GRANTED_ROLES[type] || [])])]; const failed = [];
+        for (const roleId of roles) { try { await applicant.roles.add(roleId, `${config.label} application approved`); } catch (e) { failed.push(roleId); console.error("Application role grant failed", e); } }
+        const balance = addTokens(applicantId, TOKEN_REWARDS.application);
+        await interaction.update({ content: `✅ ${config.label} application approved by ${interaction.user}. ${applicant} received **90 tokens**.${failed.length ? ` Roles not assigned: ${failed.join(", ")}` : " All configured roles were assigned."}`, components: [] });
+        await applicant.send(`Your **${config.label}** application at Aksh's Advertising has been approved! You received **90 tokens**. Your token balance is now **${balance}**.`).catch(() => { });
         return;
     }
-    await interaction.update({content:`❌ ${config.label} application rejected by ${interaction.user}.`,components:[]});
-    if(applicant) await applicant.send(`Thank you for applying for **${config.label}** at Aksh's Advertising. Your application was not approved this time.`).catch(()=>{});
+    await interaction.update({ content: `❌ ${config.label} application rejected by ${interaction.user}.`, components: [] });
+    if (applicant) await applicant.send(`Thank you for applying for **${config.label}** at Aksh's Advertising. Your application was not approved this time.`).catch(() => { });
 }
 
 // ======================================================
@@ -5111,7 +5111,7 @@ async function refreshActivityRole(member) {
     const level = [...COMMUNITY_ACTIVITY_ROLES].reverse().find(r => points >= r.minPoints);
     for (const role of COMMUNITY_ACTIVITY_ROLES) {
         if (member.roles.cache.has(role.roleId) && role.roleId !== level?.roleId) {
-            await member.roles.remove(role.roleId, "Activity level recalculated").catch(() => {});
+            await member.roles.remove(role.roleId, "Activity level recalculated").catch(() => { });
         }
     }
     if (level && !member.roles.cache.has(level.roleId)) {
@@ -5147,10 +5147,12 @@ async function submitOrderReview(interaction) {
     feedbackData.orderReviews[id] = { orderId: id, userId: interaction.user.id, staffId, rating, comment, at: Date.now() };
     saveJSON(FEEDBACK_FILE, feedbackData);
     const channel = await client.channels.fetch(STAFF_FEEDBACK_CHANNEL_ID).catch(() => null);
-    if (channel?.isTextBased()) await channel.send({ embeds: [new EmbedBuilder().setColor(rating >= 8 ? 0x57F287 : rating >= 5 ? 0xFEE75C : 0xED4245).setTitle("⭐ Customer Staff Review").addFields(
-        { name: "Order", value: id, inline: true }, { name: "Rating", value: `${rating}/10`, inline: true },
-        { name: "Customer", value: `${interaction.user}`, inline: true }, { name: "Staff", value: staffId ? `<@${staffId}>` : "Unassigned", inline: true },
-        { name: "Comment", value: comment, inline: false }).setTimestamp()] });
+    if (channel?.isTextBased()) await channel.send({
+        embeds: [new EmbedBuilder().setColor(rating >= 8 ? 0x57F287 : rating >= 5 ? 0xFEE75C : 0xED4245).setTitle("⭐ Customer Staff Review").addFields(
+            { name: "Order", value: id, inline: true }, { name: "Rating", value: `${rating}/10`, inline: true },
+            { name: "Customer", value: `${interaction.user}`, inline: true }, { name: "Staff", value: staffId ? `<@${staffId}>` : "Unassigned", inline: true },
+            { name: "Comment", value: comment, inline: false }).setTimestamp()]
+    });
     return interaction.reply({ content: "Thank you! Your order review has been submitted.", flags: MessageFlags.Ephemeral });
 }
 
@@ -5160,9 +5162,11 @@ async function submitGeneralFeedback(interaction) {
     feedbackData.general.push({ userId: interaction.user.id, rating, comment, at: Date.now() });
     saveJSON(FEEDBACK_FILE, feedbackData);
     const channel = await client.channels.fetch(STAFF_FEEDBACK_CHANNEL_ID).catch(() => null);
-    if (channel?.isTextBased()) await channel.send({ embeds: [new EmbedBuilder().setColor(rating >= 8 ? 0x57F287 : rating >= 5 ? 0xFEE75C : 0xED4245).setTitle("💬 General Community Feedback").addFields(
-        { name: "Member", value: `${interaction.user} (\`${interaction.user.id}\`)`, inline: true },
-        { name: "Rating", value: `${rating}/10`, inline: true }, { name: "Comment", value: comment, inline: false }).setTimestamp()] });
+    if (channel?.isTextBased()) await channel.send({
+        embeds: [new EmbedBuilder().setColor(rating >= 8 ? 0x57F287 : rating >= 5 ? 0xFEE75C : 0xED4245).setTitle("💬 General Community Feedback").addFields(
+            { name: "Member", value: `${interaction.user} (\`${interaction.user.id}\`)`, inline: true },
+            { name: "Rating", value: `${rating}/10`, inline: true }, { name: "Comment", value: comment, inline: false }).setTimestamp()]
+    });
     return interaction.reply({ content: "Thank you! Your general feedback has been submitted.", flags: MessageFlags.Ephemeral });
 }
 
@@ -5205,7 +5209,7 @@ async function handleSuggestionReview(interaction) {
         entry.rewardedAt = Date.now();
         reward = ` Author awarded ${amount} tokens (balance: ${balance}).`;
         const author = await client.users.fetch(entry.userId).catch(() => null);
-        if (author) await author.send(`Your suggestion **${id}** was accepted. You received **${amount} tokens**.`).catch(() => {});
+        if (author) await author.send(`Your suggestion **${id}** was accepted. You received **${amount} tokens**.`).catch(() => { });
     }
     saveJSON(SUGGESTION_FILE, suggestionData);
     const embed = EmbedBuilder.from(interaction.message.embeds[0]).addFields({ name: "Decision", value: `${entry.status} by ${interaction.user}` });
@@ -5248,33 +5252,33 @@ commands.push(
         .addStringOption(option => option.setName("order_id").setDescription("Order ID, e.g. AKS-0001").setRequired(true)),
     new SlashCommandBuilder().setName("ordercancel").setDescription("Request cancellation of your active order"),
     new SlashCommandBuilder().setName("orderaction").setDescription("Manage an order using a slash command")
-        .addStringOption(o=>o.setName("action").setDescription("Action to perform").setRequired(true).addChoices(
-            {name:"Unclaim",value:"unclaim"},{name:"Assign HR",value:"assignhr"},{name:"Remove HR",value:"removehr"},{name:"Update Status",value:"status"},{name:"Update Payment Status",value:"payment"},{name:"Send to Quality Check",value:"qualitycheck"},{name:"QC Accept",value:"qcaccept"},{name:"QC Deny",value:"qcdeny"},{name:"Request Revision",value:"revision"},{name:"Confirm Complete",value:"complete"},{name:"Add Staff Note",value:"note"},{name:"Request Information",value:"requestinfo"},{name:"Create Transcript",value:"transcript"}))
-        .addStringOption(o=>o.setName("order_id").setDescription("Order ID (optional inside its ticket)"))
-        .addUserOption(o=>o.setName("user").setDescription("HR member to assign"))
-        .addStringOption(o=>o.setName("value").setDescription("New stage or payment status"))
-        .addStringOption(o=>o.setName("text").setDescription("Revision, note, or information request")),
+        .addStringOption(o => o.setName("action").setDescription("Action to perform").setRequired(true).addChoices(
+            { name: "Unclaim", value: "unclaim" }, { name: "Assign HR", value: "assignhr" }, { name: "Remove HR", value: "removehr" }, { name: "Update Status", value: "status" }, { name: "Update Payment Status", value: "payment" }, { name: "Send to Quality Check", value: "qualitycheck" }, { name: "QC Accept", value: "qcaccept" }, { name: "QC Deny", value: "qcdeny" }, { name: "Request Revision", value: "revision" }, { name: "Confirm Complete", value: "complete" }, { name: "Add Staff Note", value: "note" }, { name: "Request Information", value: "requestinfo" }, { name: "Create Transcript", value: "transcript" }))
+        .addStringOption(o => o.setName("order_id").setDescription("Order ID (optional inside its ticket)"))
+        .addUserOption(o => o.setName("user").setDescription("HR member to assign"))
+        .addStringOption(o => o.setName("value").setDescription("New stage or payment status"))
+        .addStringOption(o => o.setName("text").setDescription("Revision, note, or information request")),
     new SlashCommandBuilder().setName("ordertokens").setDescription("Set the token price for an order")
-        .addStringOption(o=>o.setName("order_id").setDescription("Order ID").setRequired(true))
-        .addIntegerOption(o=>o.setName("tokens").setDescription("Token price").setRequired(true).setMinValue(1)),
+        .addStringOption(o => o.setName("order_id").setDescription("Order ID").setRequired(true))
+        .addIntegerOption(o => o.setName("tokens").setDescription("Token price").setRequired(true).setMinValue(1)),
     new SlashCommandBuilder().setName("payorder").setDescription("Pay for your order using tokens")
-        .addStringOption(o=>o.setName("order_id").setDescription("Order ID").setRequired(true)),
+        .addStringOption(o => o.setName("order_id").setDescription("Order ID").setRequired(true)),
     new SlashCommandBuilder().setName("balance").setDescription("View your Aksh's Coins and token balances")
-        .addUserOption(o=>o.setName("user").setDescription("View another member's public wallet")),
+        .addUserOption(o => o.setName("user").setDescription("View another member's public wallet")),
     new SlashCommandBuilder().setName("daily").setDescription("Claim your daily Aksh's Coins"),
     new SlashCommandBuilder().setName("shop").setDescription("View the Aksh's Coins shop"),
     new SlashCommandBuilder().setName("buy").setDescription("Purchase an item from the shop")
-        .addStringOption(o=>o.setName("item").setDescription("Shop item").setRequired(true).addChoices(...Object.entries(ECONOMY_SHOP).map(([value,item])=>({name:`${item.name} (${item.price.toLocaleString()})`,value})))),
+        .addStringOption(o => o.setName("item").setDescription("Shop item").setRequired(true).addChoices(...Object.entries(ECONOMY_SHOP).map(([value, item]) => ({ name: `${item.name} (${item.price.toLocaleString()})`, value })))),
     new SlashCommandBuilder().setName("inventory").setDescription("View your purchased vouchers"),
     new SlashCommandBuilder().setName("coinleaderboard").setDescription("View the Aksh's Coins leaderboard"),
     new SlashCommandBuilder().setName("grantcoins").setDescription("Grant Aksh's Coins to a member")
-        .addUserOption(o=>o.setName("user").setDescription("Member").setRequired(true)).addIntegerOption(o=>o.setName("amount").setDescription("Amount").setRequired(true).setMinValue(1)),
+        .addUserOption(o => o.setName("user").setDescription("Member").setRequired(true)).addIntegerOption(o => o.setName("amount").setDescription("Amount").setRequired(true).setMinValue(1)),
     new SlashCommandBuilder().setName("granttokens").setDescription("Grant tokens to a member")
-        .addUserOption(o=>o.setName("user").setDescription("Member").setRequired(true)).addIntegerOption(o=>o.setName("amount").setDescription("Amount").setRequired(true).setMinValue(1)),
+        .addUserOption(o => o.setName("user").setDescription("Member").setRequired(true)).addIntegerOption(o => o.setName("amount").setDescription("Amount").setRequired(true).setMinValue(1)),
     new SlashCommandBuilder().setName("rewardtokens").setDescription("Approve a contribution reward")
-        .addStringOption(o=>o.setName("type").setDescription("Contribution type").setRequired(true).addChoices({name:"Verified bug report (50)",value:"bug"},{name:"Development contribution (50)",value:"development"}))
-        .addUserOption(o=>o.setName("user").setDescription("Member receiving tokens").setRequired(true))
-        .addStringOption(o=>o.setName("reason").setDescription("Proof or short reason").setRequired(true))
+        .addStringOption(o => o.setName("type").setDescription("Contribution type").setRequired(true).addChoices({ name: "Verified bug report (50)", value: "bug" }, { name: "Development contribution (50)", value: "development" }))
+        .addUserOption(o => o.setName("user").setDescription("Member receiving tokens").setRequired(true))
+        .addStringOption(o => o.setName("reason").setDescription("Proof or short reason").setRequired(true))
 );
 
 // Partnership
@@ -5745,6 +5749,77 @@ async function registerCommands() {
 }
 
 // ======================================================
+// DESIGNERS AND QUALITY CONTROL DEPARTMENTS
+// ======================================================
+
+const DESIGNER_DEPARTMENT_ROLE_IDS = [
+    "1570386088021860392",
+    "1570385835285544991",
+    "1570385886909042798"
+];
+const DEPARTMENT_MANAGEMENT_ROLE_IDS = [
+    OWNER_ROLE_ID,
+    ADMIN_ROLE_ID,
+    STAFF_ROLE_ID,
+    HIGH_RANK_ROLE_ID,
+    ...SHR_ROLE_IDS
+];
+
+async function ensureDepartmentStructure(guild) {
+    const everyoneId = guild.roles.everyone.id;
+    const managerIds = [...new Set(DEPARTMENT_MANAGEMENT_ROLE_IDS)];
+    const designerIds = [...new Set([...DESIGNER_DEPARTMENT_ROLE_IDS, QUALITY_CHECK_HR_ROLE_ID, ...managerIds])];
+    const qcIds = [...new Set([QUALITY_CHECK_HR_ROLE_ID, ...managerIds])];
+
+    async function ensureCategory(name, roleIds) {
+        let category = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === name);
+        const overwrites = [
+            { id: everyoneId, deny: [PermissionFlagsBits.ViewChannel] },
+            ...roleIds.map(id => ({ id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory] }))
+        ];
+        if (!category) {
+            category = await guild.channels.create({ name, type: ChannelType.GuildCategory, permissionOverwrites: overwrites, reason: "Set up department channels" });
+        } else {
+            await category.permissionOverwrites.set(overwrites, "Sync department category permissions");
+        }
+        return category;
+    }
+
+    async function ensureTextChannel(category, name, roleIds, readOnly = false) {
+        const canPostIds = readOnly ? managerIds : roleIds;
+        const overwrites = [
+            { id: everyoneId, deny: [PermissionFlagsBits.ViewChannel] },
+            ...roleIds.map(id => ({ id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory] })),
+            ...canPostIds.map(id => ({ id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks] }))
+        ];
+        let channel = guild.channels.cache.find(c => c.type === ChannelType.GuildText && c.name === name);
+        if (!channel) {
+            channel = await guild.channels.create({ name, type: ChannelType.GuildText, parent: category.id, permissionOverwrites: overwrites, reason: "Set up department channels" });
+        } else {
+            await channel.setParent(category.id, { lockPermissions: false, reason: "Organise department channels" });
+            await channel.permissionOverwrites.set(overwrites, "Sync department channel permissions");
+        }
+        return channel;
+    }
+
+    const designers = await ensureCategory("🎨・Designers", designerIds);
+    await ensureTextChannel(designers, "💬・design-chat", designerIds);
+    await ensureTextChannel(designers, "🖼️・showcase", designerIds);
+    await ensureTextChannel(designers, "📦・design-orders", designerIds);
+    await ensureTextChannel(designers, "📢・announcements", designerIds, true);
+    await ensureTextChannel(designers, "💡・ideas", designerIds);
+
+    const qc = await ensureCategory("🛡️・Quality Control", qcIds);
+    await ensureTextChannel(qc, "💬・qc-chat", qcIds);
+    await ensureTextChannel(qc, "📋・order-logs", qcIds);
+    await ensureTextChannel(qc, "🔍・order-reviews", qcIds);
+    await ensureTextChannel(qc, "❌・rejected-orders", qcIds);
+    await ensureTextChannel(qc, "✅・approved-orders", qcIds);
+
+    console.log("✅ Designers and Quality Control departments are ready.");
+}
+
+// ======================================================
 // READY
 // ======================================================
 
@@ -5780,6 +5855,11 @@ client.once(
 
         if (guild) {
             await cacheGuildInvites(guild);
+            try {
+                await ensureDepartmentStructure(guild);
+            } catch (error) {
+                console.error("❌ Department channel setup failed:", error);
+            }
         }
 
         // Automatic ticket panel
@@ -5902,8 +5982,8 @@ client.on(
                     case "buy": return economyBuy(interaction);
                     case "inventory": return economyInventory(interaction);
                     case "coinleaderboard": return economyLeaderboard(interaction);
-                    case "grantcoins": return economyGrant(interaction,"coins");
-                    case "granttokens": return economyGrant(interaction,"tokens");
+                    case "grantcoins": return economyGrant(interaction, "coins");
+                    case "granttokens": return economyGrant(interaction, "tokens");
                     case "rewardtokens": return economyReward(interaction);
                     case "orderreview": return submitOrderReview(interaction);
                     case "stafffeedback": return submitGeneralFeedback(interaction);
@@ -6134,10 +6214,10 @@ client.on(
                 if (interaction.customId.startsWith("suggestion_accept:") || interaction.customId.startsWith("suggestion_reject:")) return handleSuggestionReview(interaction);
                 if (interaction.customId.startsWith("application_approve:") || interaction.customId.startsWith("application_reject:")) return handleApplicationReview(interaction);
                 if (interaction.customId.startsWith("app_dm_start:")) {
-                    const [,type,ownerId]=interaction.customId.split(":");
-                    if(interaction.user.id!==ownerId || !APPLICATIONS[type]) return interaction.reply({content:"This application link is not yours or has expired."});
+                    const [, type, ownerId] = interaction.customId.split(":");
+                    if (interaction.user.id !== ownerId || !APPLICATIONS[type]) return interaction.reply({ content: "This application link is not yours or has expired." });
                     applicationDrafts.delete(`${interaction.user.id}:${type}`);
-                    return interaction.showModal(buildApplicationModal(type,0,interaction.user.id));
+                    return interaction.showModal(buildApplicationModal(type, 0, interaction.user.id));
                 }
 
                 if (interaction.customId.startsWith("order_")) {
@@ -6311,12 +6391,12 @@ client.on(
 
                 if (interaction.customId === "application_select") {
                     const type = interaction.values[0];
-                    if (!APPLICATIONS[type]) return interaction.reply({content:"Invalid application type.",flags:MessageFlags.Ephemeral});
-                    const dm = await interaction.user.createDM().catch(()=>null);
-                    if(!dm) return interaction.reply({content:"I could not DM you. Enable server-member DMs and try again.",flags:MessageFlags.Ephemeral});
+                    if (!APPLICATIONS[type]) return interaction.reply({ content: "Invalid application type.", flags: MessageFlags.Ephemeral });
+                    const dm = await interaction.user.createDM().catch(() => null);
+                    if (!dm) return interaction.reply({ content: "I could not DM you. Enable server-member DMs and try again.", flags: MessageFlags.Ephemeral });
                     const start = new ButtonBuilder().setCustomId(`app_dm_start:${type}:${interaction.user.id}`).setLabel(`Start ${APPLICATIONS[type].label} application`).setStyle(ButtonStyle.Primary);
-                    await dm.send({embeds:[new EmbedBuilder().setColor(0x5865F2).setTitle(`📝 ${APPLICATIONS[type].label} Application`).setDescription("Your application form and test will be completed here in DMs. Answer honestly and submit each page to continue.")],components:[new ActionRowBuilder().addComponents(start)]});
-                    return interaction.reply({content:"📩 I have sent your application to DMs. Please check your direct messages.",flags:MessageFlags.Ephemeral});
+                    await dm.send({ embeds: [new EmbedBuilder().setColor(0x5865F2).setTitle(`📝 ${APPLICATIONS[type].label} Application`).setDescription("Your application form and test will be completed here in DMs. Answer honestly and submit each page to continue.")], components: [new ActionRowBuilder().addComponents(start)] });
+                    return interaction.reply({ content: "📩 I have sent your application to DMs. Please check your direct messages.", flags: MessageFlags.Ephemeral });
                 }
 
                 if (interaction.customId.startsWith("timezone_select:")) {
