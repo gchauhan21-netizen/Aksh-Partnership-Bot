@@ -5766,39 +5766,129 @@ const DEPARTMENT_MANAGEMENT_ROLE_IDS = [
 ];
 
 async function ensureDepartmentStructure(guild) {
+    // Fetch all guild roles first. PermissionOverwrites.resolve() needs each
+    // role ID to exist in the guild role cache.
+    await guild.roles.fetch();
+
     const everyoneId = guild.roles.everyone.id;
-    const managerIds = [...new Set(DEPARTMENT_MANAGEMENT_ROLE_IDS)];
-    const designerIds = [...new Set([...DESIGNER_DEPARTMENT_ROLE_IDS, QUALITY_CHECK_HR_ROLE_ID, ...managerIds])];
-    const qcIds = [...new Set([QUALITY_CHECK_HR_ROLE_ID, ...managerIds])];
+    const requestedManagerIds = [...new Set(DEPARTMENT_MANAGEMENT_ROLE_IDS)];
+    const requestedDesignerIds = [...new Set([
+        ...DESIGNER_DEPARTMENT_ROLE_IDS,
+        QUALITY_CHECK_HR_ROLE_ID,
+        ...requestedManagerIds
+    ])];
+    const requestedQcIds = [...new Set([
+        QUALITY_CHECK_HR_ROLE_ID,
+        ...requestedManagerIds
+    ])];
+
+    const validRoleIds = new Set(guild.roles.cache.keys());
+    const missingRoleIds = [...new Set([
+        ...requestedManagerIds,
+        ...DESIGNER_DEPARTMENT_ROLE_IDS,
+        QUALITY_CHECK_HR_ROLE_ID
+    ])].filter(id => !validRoleIds.has(id));
+
+    if (missingRoleIds.length) {
+        console.warn(
+            "⚠️ Department setup: these configured role IDs were not found in this server and will be skipped:",
+            missingRoleIds.join(", ")
+        );
+    }
+
+    const managerIds = requestedManagerIds.filter(id => validRoleIds.has(id));
+    const designerIds = requestedDesignerIds.filter(id => validRoleIds.has(id));
+    const qcIds = requestedQcIds.filter(id => validRoleIds.has(id));
+
+    function makeOverwrites(roleIds, postingRoleIds = []) {
+        const overwriteMap = new Map();
+
+        overwriteMap.set(everyoneId, {
+            id: everyoneId,
+            deny: [PermissionFlagsBits.ViewChannel]
+        });
+
+        for (const roleId of roleIds) {
+            overwriteMap.set(roleId, {
+                id: roleId,
+                allow: [
+                    PermissionFlagsBits.ViewChannel,
+                    PermissionFlagsBits.ReadMessageHistory
+                ]
+            });
+        }
+
+        for (const roleId of postingRoleIds) {
+            overwriteMap.set(roleId, {
+                id: roleId,
+                allow: [
+                    PermissionFlagsBits.ViewChannel,
+                    PermissionFlagsBits.ReadMessageHistory,
+                    PermissionFlagsBits.SendMessages,
+                    PermissionFlagsBits.AttachFiles,
+                    PermissionFlagsBits.EmbedLinks
+                ]
+            });
+        }
+
+        return [...overwriteMap.values()];
+    }
 
     async function ensureCategory(name, roleIds) {
-        let category = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === name);
-        const overwrites = [
-            { id: everyoneId, deny: [PermissionFlagsBits.ViewChannel] },
-            ...roleIds.map(id => ({ id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory] }))
-        ];
+        let category = guild.channels.cache.find(
+            channel =>
+                channel.type === ChannelType.GuildCategory &&
+                channel.name === name
+        );
+
+        const permissionOverwrites = makeOverwrites(roleIds);
+
         if (!category) {
-            category = await guild.channels.create({ name, type: ChannelType.GuildCategory, permissionOverwrites: overwrites, reason: "Set up department channels" });
+            category = await guild.channels.create({
+                name,
+                type: ChannelType.GuildCategory,
+                permissionOverwrites,
+                reason: "Set up department channels"
+            });
         } else {
-            await category.permissionOverwrites.set(overwrites, "Sync department category permissions");
+            await category.permissionOverwrites.set(
+                permissionOverwrites,
+                "Sync department category permissions"
+            );
         }
+
         return category;
     }
 
     async function ensureTextChannel(category, name, roleIds, readOnly = false) {
         const canPostIds = readOnly ? managerIds : roleIds;
-        const overwrites = [
-            { id: everyoneId, deny: [PermissionFlagsBits.ViewChannel] },
-            ...roleIds.map(id => ({ id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory] })),
-            ...canPostIds.map(id => ({ id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks] }))
-        ];
-        let channel = guild.channels.cache.find(c => c.type === ChannelType.GuildText && c.name === name);
+        const permissionOverwrites = makeOverwrites(roleIds, canPostIds);
+
+        let channel = guild.channels.cache.find(
+            existing =>
+                existing.type === ChannelType.GuildText &&
+                existing.name === name
+        );
+
         if (!channel) {
-            channel = await guild.channels.create({ name, type: ChannelType.GuildText, parent: category.id, permissionOverwrites: overwrites, reason: "Set up department channels" });
+            channel = await guild.channels.create({
+                name,
+                type: ChannelType.GuildText,
+                parent: category.id,
+                permissionOverwrites,
+                reason: "Set up department channels"
+            });
         } else {
-            await channel.setParent(category.id, { lockPermissions: false, reason: "Organise department channels" });
-            await channel.permissionOverwrites.set(overwrites, "Sync department channel permissions");
+            await channel.setParent(category.id, {
+                lockPermissions: false,
+                reason: "Organise department channels"
+            });
+            await channel.permissionOverwrites.set(
+                permissionOverwrites,
+                "Sync department channel permissions"
+            );
         }
+
         return channel;
     }
 
