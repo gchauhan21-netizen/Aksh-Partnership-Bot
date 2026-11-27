@@ -50,6 +50,7 @@ const TICKET_PANEL_CHANNEL_ID = "1558473182476763334";
 const WELCOME_CHANNEL_ID = "1565891261871693895";
 const INVITE_CHANNEL_ID = "1566067137775403059";
 const VERIFICATION_CHANNEL_ID = "1558745120394838067";
+const REACTION_ROLE_CHANNEL_ID = "1558473179905786006";
 
 const QOTD_CHANNEL_ID = "1558473206418116678";
 const INFRACTION_CHANNEL_ID = "1558473256921731123";
@@ -174,6 +175,7 @@ const INVITE_FILE = path.join(DATA_DIR, "invites.json");
 const INFRACTION_FILE = path.join(DATA_DIR, "infractions.json");
 const GIVEAWAY_FILE = path.join(DATA_DIR, "giveaways.json");
 const VERIFICATION_FILE = path.join(DATA_DIR, "verification_data.json");
+const REACTION_FILE = path.join(DATA_DIR, "reaction_roles.json");
 
 function loadJSON(file, fallback) {
     try {
@@ -214,6 +216,11 @@ let giveaways = loadJSON(GIVEAWAY_FILE, {});
 
 let verificationData = loadJSON(VERIFICATION_FILE, {
     panelMessageId: null
+});
+
+let reactionRoles = loadJSON(REACTION_FILE, {
+    messageId: null,
+    roles: {}
 });
 
 // ======================================================
@@ -922,9 +929,19 @@ async function closeTicket(interaction) {
         });
     }
 
-    if (!interaction.member.roles.cache.has("1558477508129849434")) {
+    const owner =
+        ticket.userId === interaction.user.id;
+
+    const staff =
+        hasTicketStaffRole(
+            interaction.member,
+            ticket.type
+        );
+
+    if (!owner && !staff) {
         return interaction.reply({
-            content: "❌ Only the designated HR role can close tickets.",
+            content:
+                "❌ Only the ticket owner or staff can close this.",
             flags: MessageFlags.Ephemeral
         });
     }
@@ -1037,9 +1054,15 @@ async function confirmClose(interaction) {
         });
     }
 
-    if (!interaction.member.roles.cache.has("1558477508129849434")) {
+    if (
+        !hasTicketStaffRole(
+            interaction.member,
+            ticket.type
+        )
+    ) {
         return interaction.reply({
-            content: "❌ Only the designated HR role can confirm ticket closure.",
+            content:
+                "❌ Only authorized staff can confirm closure.",
             flags: MessageFlags.Ephemeral
         });
     }
@@ -1756,8 +1779,7 @@ async function economyReward(interaction) {
 const ORDER_TICKET_CATEGORY_ID = "1570389740576841798";
 const ORDER_PANEL_CHANNEL_ID = "1570383007443984404";
 const ORDER_HR_ROLE_IDS = ["1558477508129849434", "1558672561192308786"];
-const DESIGNER_REWARD_ROLE_IDS = ["1570386088021860392", "1570385835285544991", "1570385886909042798"];
-const QUALITY_CHECK_HR_ROLE_ID = "1558477508129849434";
+const DESIGNER_REWARD_ROLE_IDS = ["1570385835285544991", "1570385886909042798"];
 
 const ORDER_CATEGORIES = {
     gfx: { label: "GFX", emoji: "🎨", roles: ["1570386031151284274"] },
@@ -1769,7 +1791,7 @@ const ORDER_CATEGORIES = {
     discord_embeds: { label: "Discord Embeds", emoji: "💠", roles: ["1570385933109567548"] }
 };
 
-const ORDER_STAGES = ["Submitted", "Claimed", "HR Assigned", "Accepted", "In Progress", "Quality Check", "Delivered", "Completed"];
+const ORDER_STAGES = ["Submitted", "Claimed", "HR Assigned", "Accepted", "In Progress", "Delivered", "Completed"];
 const PAYMENT_STATES = ["Awaiting Payment", "Proof Submitted", "Under Review", "Approved", "Rejected", "Refund Requested", "Refunded"];
 const ORDER_DATA_FILE = path.join(DATA_DIR, "orders.json");
 let orderData = loadJSON(ORDER_DATA_FILE, {
@@ -1803,16 +1825,6 @@ function isOrderHR(member) {
 
 function canManageOrder(member, order) {
     return canManageOrders(member) || orderStaffFor(member, order) || isOrderHR(member);
-}
-
-function canQualityCheck(member, order) {
-    if (!member || !order) return false;
-    const allowed = new Set([
-        QUALITY_CHECK_HR_ROLE_ID,
-        ...(ORDER_CATEGORIES[order.category]?.roles || []),
-        ...DESIGNER_REWARD_ROLE_IDS
-    ]);
-    return [...allowed].some(roleId => member.roles?.cache?.has(roleId));
 }
 
 function orderProgressEmbed(order) {
@@ -2137,8 +2149,8 @@ async function handleOrderButton(interaction) {
             return;
         }
         case "order_close": {
-            if (!interaction.member.roles.cache.has(QUALITY_CHECK_HR_ROLE_ID)) return interaction.reply({ content: "Only the designated HR role can close order tickets.", flags: MessageFlags.Ephemeral });
-            if (order.stage !== "Completed") return interaction.reply({ content: "Orders must be Completed before they can be closed.", flags: MessageFlags.Ephemeral });
+            if (!staff && !customer) return interaction.reply({ content: "You cannot close this order.", flags: MessageFlags.Ephemeral });
+            if (order.stage !== "Completed" && !isOwner(interaction.member)) return interaction.reply({ content: "Orders must be Completed before they can be closed. Ask management if this order needs exceptional closure.", flags: MessageFlags.Ephemeral });
             await interaction.reply({ content: "🔒 This order ticket will close in 5 seconds.", flags: MessageFlags.Ephemeral });
             order.closedAt = Date.now(); saveOrders();
             await sendOrderLog("🔒 Order Ticket Closed", `**Order:** ${order.id}\n**Closed by:** ${interaction.user}`);
@@ -2263,34 +2275,14 @@ async function orderActionCommand(interaction) {
         const ch = await client.channels.fetch(order.channelId).catch(() => null); if (ch?.isTextBased()) await updateOrderProgress(ch, order);
         return interaction.reply({ content: `✅ **${order.id}** marked Completed.`, flags: MessageFlags.Ephemeral });
     }
-    if (["qcaccept", "qcdeny"].includes(action)) {
-        if (!canQualityCheck(interaction.member, order)) return interaction.reply({ content: "Only the matching service/design team or designated QC HR can accept or deny this quality check.", flags: MessageFlags.Ephemeral });
-        if (order.stage !== "Quality Check") return interaction.reply({ content: "This order must be in the Quality Check stage first.", flags: MessageFlags.Ephemeral });
-        const reason = interaction.options.getString("text") || "";
-        if (action === "qcdeny" && !reason.trim()) return interaction.reply({ content: "Provide the QC rejection reason in the text option.", flags: MessageFlags.Ephemeral });
-        order.stage = action === "qcaccept" ? "Delivered" : "In Progress";
-        order.status = order.stage;
-        order.qc = { result: action === "qcaccept" ? "Accepted" : "Denied", by: interaction.user.id, at: Date.now(), reason: safeText(reason, 500) };
-        order.statusHistory ||= [];
-        order.statusHistory.push({ status: `Quality Check ${order.qc.result}`, by: interaction.user.id, at: Date.now(), reason: safeText(reason, 500) });
-        saveOrders();
-        const qcChannel = await client.channels.fetch(order.channelId).catch(() => null);
-        if (qcChannel?.isTextBased()) {
-            await updateOrderProgress(qcChannel, order);
-            await qcChannel.send(action === "qcaccept" ? `✅ Quality Check accepted by ${interaction.user}. The order is now **Delivered**.` : `❌ Quality Check denied by ${interaction.user}. Returned to **In Progress**.\\nReason: ${safeText(reason, 800)}`);
-        }
-        await sendOrderLog(`🔎 Quality Check ${order.qc.result}`, `**Order:** ${order.id}\\n**Reviewer:** ${interaction.user}\\n**Reason:** ${safeText(reason || "None", 500)}`);
-        return interaction.reply({ content: `Quality Check ${order.qc.result.toLowerCase()} for **${order.id}**.`, flags: MessageFlags.Ephemeral });
-    }
     if (!staff) return interaction.reply({ content: "Only authorised order-management roles can use this action.", flags: MessageFlags.Ephemeral });
     const channel = await client.channels.fetch(order.channelId).catch(() => null);
     if (action === "unclaim") { if (!order.claimedBy) return interaction.reply({ content: "Order is not claimed.", flags: MessageFlags.Ephemeral }); order.claimedBy = null; if (order.stage === "Claimed") order.stage = "Submitted"; }
     else if (action === "assignhr") { const user = interaction.options.getUser("user"); if (!user) return interaction.reply({ content: "Select an HR member.", flags: MessageFlags.Ephemeral }); const member = await interaction.guild.members.fetch(user.id).catch(() => null); if (!member || !ORDER_HR_ROLE_IDS.some(id => member.roles.cache.has(id))) return interaction.reply({ content: "That member does not have an authorised HR role.", flags: MessageFlags.Ephemeral }); order.hrAssigned = user.id; if (channel?.permissionOverwrites) await channel.permissionOverwrites.edit(user.id, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true }); if (order.stage === "Submitted" || order.stage === "Claimed") order.stage = "HR Assigned"; }
     else if (action === "removehr") { if (!order.hrAssigned) return interaction.reply({ content: "No HR member is assigned.", flags: MessageFlags.Ephemeral }); if (channel?.permissionOverwrites) await channel.permissionOverwrites.delete(order.hrAssigned).catch(() => { }); order.hrAssigned = null; }
-    else if (action === "status") { const stage = interaction.options.getString("value"); if (!ORDER_STAGES.includes(stage)) return interaction.reply({ content: "Invalid stage.", flags: MessageFlags.Ephemeral }); if (["Quality Check", "Delivered", "Completed"].includes(stage)) return interaction.reply({ content: "Use the dedicated QC and completion actions for these stages.", flags: MessageFlags.Ephemeral }); order.stage = stage; }
+    else if (action === "status") { const stage = interaction.options.getString("value"); if (!ORDER_STAGES.includes(stage)) return interaction.reply({ content: "Invalid stage.", flags: MessageFlags.Ephemeral }); order.stage = stage; }
     else if (action === "payment") { const value = interaction.options.getString("value"); if (!PAYMENT_STATES.includes(value)) return interaction.reply({ content: "Invalid payment status.", flags: MessageFlags.Ephemeral }); order.payment = value; }
-    else if (action === "qualitycheck") { if (!["In Progress", "Accepted"].includes(order.stage)) return interaction.reply({ content: "Only an accepted or in-progress order can enter Quality Check.", flags: MessageFlags.Ephemeral }); order.stage = "Quality Check"; order.qcRequestedAt = Date.now(); }
-    else if (action === "delivered") { return interaction.reply({ content: "Use QC Accept to mark an order Delivered.", flags: MessageFlags.Ephemeral }); }
+    else if (action === "delivered") { order.stage = "Delivered"; order.delivery = { by: interaction.user.id, at: Date.now() }; }
     else if (action === "note") { const note = interaction.options.getString("text"); if (!note?.trim()) return interaction.reply({ content: "Provide the staff note in the text option.", flags: MessageFlags.Ephemeral }); order.notes ||= []; order.notes.push({ text: note, by: interaction.user.id, at: Date.now() }); }
     else if (action === "requestinfo") { const text = interaction.options.getString("text"); if (!text?.trim()) return interaction.reply({ content: "Provide the requested information in the text option.", flags: MessageFlags.Ephemeral }); if (channel?.isTextBased()) await channel.send(`<@${order.userId}> Additional information requested: ${safeText(text, 1000)}`); }
     else if (action === "transcript") {
@@ -2722,6 +2714,120 @@ async function setupVerificationPanel() {
         VERIFICATION_FILE,
         verificationData
     );
+}
+
+// ======================================================
+// REACTION ROLES
+// ======================================================
+
+const REACTION_ROLE_CONFIG = [
+    {
+        emoji: "📢",
+        name: "Announcement",
+        roleId: "1557805059700695111"
+    },
+    {
+        emoji: "🔔",
+        name: "Sub Announcement",
+        roleId: "1557974601017856020"
+    },
+    {
+        emoji: "🎉",
+        name: "Giveaway",
+        roleId: "1557974710254571541"
+    },
+    {
+        emoji: "💰",
+        name: "Paid Ads",
+        roleId: "1557974795067457606"
+    }
+];
+
+async function setupReactionRoles() {
+    if (!reactionRoles.messageId) return;
+
+    const channel =
+        await client.channels.fetch(
+            REACTION_ROLE_CHANNEL_ID
+        ).catch(() => null);
+
+    if (!channel?.isTextBased()) return;
+
+    const message =
+        await channel.messages.fetch(
+            reactionRoles.messageId
+        ).catch(() => null);
+
+    if (!message) return;
+
+    for (const role of REACTION_ROLE_CONFIG) {
+        await message.react(role.emoji).catch(() => { });
+    }
+}
+
+async function createReactionRolePanel(interaction) {
+    if (!isStaff(interaction.member)) {
+        return interaction.reply({
+            content:
+                "❌ You need staff permissions.",
+            flags: MessageFlags.Ephemeral
+        });
+    }
+
+    const channel =
+        await client.channels.fetch(
+            REACTION_ROLE_CHANNEL_ID
+        ).catch(() => null);
+
+    if (!channel?.isTextBased()) {
+        return interaction.reply({
+            content:
+                "❌ Reaction role channel not found.",
+            flags: MessageFlags.Ephemeral
+        });
+    }
+
+    const embed = new EmbedBuilder()
+        .setColor(0x5865F2)
+        .setTitle("🎭 Notification Roles")
+        .setDescription(
+            "React below to choose the notifications you want to receive.\n\n" +
+            REACTION_ROLE_CONFIG.map(
+                role =>
+                    `${role.emoji} **${role.name}**`
+            ).join("\n\n")
+        )
+        .setFooter({
+            text: "Aksh's Advertising • Reaction Roles"
+        });
+
+    const message = await channel.send({
+        embeds: [embed]
+    });
+
+    for (const role of REACTION_ROLE_CONFIG) {
+        await message.react(role.emoji);
+    }
+
+    reactionRoles.messageId = message.id;
+
+    reactionRoles.roles = {};
+
+    for (const role of REACTION_ROLE_CONFIG) {
+        reactionRoles.roles[role.emoji] =
+            role.roleId;
+    }
+
+    saveJSON(
+        REACTION_FILE,
+        reactionRoles
+    );
+
+    await interaction.reply({
+        content:
+            `✅ Reaction role panel posted in ${channel}.`,
+        flags: MessageFlags.Ephemeral
+    });
 }
 
 // ======================================================
@@ -4584,8 +4690,6 @@ client.on(
             message.author.bot
         ) return;
 
-        await recordCommunityActivity(message.member, "message").catch(error => console.error("Activity tracking error:", error));
-
         const content =
             message.content.toLowerCase();
 
@@ -5073,151 +5177,6 @@ async function handleTimezoneSelect(interaction) {
 }
 
 // ======================================================
-
-// ======================================================
-// STAFF FEEDBACK, SUGGESTIONS AND COMMUNITY ACTIVITY
-// ======================================================
-
-const STAFF_FEEDBACK_CHANNEL_ID = "1566022693059559535";
-const SUGGESTION_CHANNEL_ID = "1570065408818552892";
-const FEEDBACK_FILE = path.join(DATA_DIR, "staff_feedback.json");
-const SUGGESTION_FILE = path.join(DATA_DIR, "suggestions.json");
-const ACTIVITY_FILE = path.join(DATA_DIR, "community_activity.json");
-let feedbackData = loadJSON(FEEDBACK_FILE, { orderReviews: {}, general: [] });
-let suggestionData = loadJSON(SUGGESTION_FILE, { nextId: 1, entries: {} });
-let activityData = loadJSON(ACTIVITY_FILE, { users: {} });
-
-const COMMUNITY_ACTIVITY_ROLES = [
-    { roleId: "1557975706623938670", minPoints: 30 },
-    { roleId: "1557975751272439929", minPoints: 100 },
-    { roleId: "1557975797329952789", minPoints: 250 },
-    { roleId: "1557975839017271476", minPoints: 500 }
-];
-const ACTIVITY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
-const activityCooldowns = new Map();
-
-function activityUser(id) {
-    activityData.users[id] ||= { events: [], lastMessageAt: 0, lastParticipationAt: 0 };
-    activityData.users[id].events ||= [];
-    return activityData.users[id];
-}
-
-async function refreshActivityRole(member) {
-    if (!member || member.user?.bot) return;
-    const user = activityUser(member.id);
-    const cutoff = Date.now() - ACTIVITY_WINDOW_MS;
-    user.events = user.events.filter(e => e.at >= cutoff);
-    const points = user.events.reduce((n, e) => n + (e.points || 1), 0);
-    const level = [...COMMUNITY_ACTIVITY_ROLES].reverse().find(r => points >= r.minPoints);
-    for (const role of COMMUNITY_ACTIVITY_ROLES) {
-        if (member.roles.cache.has(role.roleId) && role.roleId !== level?.roleId) {
-            await member.roles.remove(role.roleId, "Activity level recalculated").catch(() => { });
-        }
-    }
-    if (level && !member.roles.cache.has(level.roleId)) {
-        await member.roles.add(level.roleId, "Community activity level reached").catch(e => console.error("Activity role error:", e));
-    }
-    user.points = points;
-    user.updatedAt = Date.now();
-    saveJSON(ACTIVITY_FILE, activityData);
-}
-
-async function recordCommunityActivity(member, kind) {
-    if (!member || member.user?.bot) return;
-    const user = activityUser(member.id);
-    const now = Date.now();
-    const key = kind === "message" ? "lastMessageAt" : "lastParticipationAt";
-    const cooldown = kind === "message" ? 60000 : 30000;
-    if (now - (user[key] || 0) < cooldown) return;
-    user[key] = now;
-    user.events.push({ kind, at: now, points: 1 });
-    user.events = user.events.filter(e => e.at >= now - ACTIVITY_WINDOW_MS);
-    await refreshActivityRole(member);
-}
-
-async function submitOrderReview(interaction) {
-    const id = interaction.options.getString("order_id").trim().toUpperCase();
-    const rating = interaction.options.getInteger("rating");
-    const comment = safeText(interaction.options.getString("comment") || "No comment provided", 1000);
-    const order = Object.values(orderData.orders).find(o => o.id === id && o.guildId === interaction.guildId);
-    if (!order || order.userId !== interaction.user.id) return interaction.reply({ content: "You can only review your own order.", flags: MessageFlags.Ephemeral });
-    if (order.stage !== "Completed") return interaction.reply({ content: "You can review an order after it is Completed.", flags: MessageFlags.Ephemeral });
-    if (feedbackData.orderReviews[id]) return interaction.reply({ content: "A review has already been submitted for this order.", flags: MessageFlags.Ephemeral });
-    const staffId = order.claimedBy || order.hrAssigned || null;
-    feedbackData.orderReviews[id] = { orderId: id, userId: interaction.user.id, staffId, rating, comment, at: Date.now() };
-    saveJSON(FEEDBACK_FILE, feedbackData);
-    const channel = await client.channels.fetch(STAFF_FEEDBACK_CHANNEL_ID).catch(() => null);
-    if (channel?.isTextBased()) await channel.send({
-        embeds: [new EmbedBuilder().setColor(rating >= 8 ? 0x57F287 : rating >= 5 ? 0xFEE75C : 0xED4245).setTitle("⭐ Customer Staff Review").addFields(
-            { name: "Order", value: id, inline: true }, { name: "Rating", value: `${rating}/10`, inline: true },
-            { name: "Customer", value: `${interaction.user}`, inline: true }, { name: "Staff", value: staffId ? `<@${staffId}>` : "Unassigned", inline: true },
-            { name: "Comment", value: comment, inline: false }).setTimestamp()]
-    });
-    return interaction.reply({ content: "Thank you! Your order review has been submitted.", flags: MessageFlags.Ephemeral });
-}
-
-async function submitGeneralFeedback(interaction) {
-    const rating = interaction.options.getInteger("rating");
-    const comment = safeText(interaction.options.getString("comment") || "No comment provided", 1000);
-    feedbackData.general.push({ userId: interaction.user.id, rating, comment, at: Date.now() });
-    saveJSON(FEEDBACK_FILE, feedbackData);
-    const channel = await client.channels.fetch(STAFF_FEEDBACK_CHANNEL_ID).catch(() => null);
-    if (channel?.isTextBased()) await channel.send({
-        embeds: [new EmbedBuilder().setColor(rating >= 8 ? 0x57F287 : rating >= 5 ? 0xFEE75C : 0xED4245).setTitle("💬 General Community Feedback").addFields(
-            { name: "Member", value: `${interaction.user} (\`${interaction.user.id}\`)`, inline: true },
-            { name: "Rating", value: `${rating}/10`, inline: true }, { name: "Comment", value: comment, inline: false }).setTimestamp()]
-    });
-    return interaction.reply({ content: "Thank you! Your general feedback has been submitted.", flags: MessageFlags.Ephemeral });
-}
-
-async function submitSuggestion(interaction) {
-    const text = safeText(interaction.options.getString("suggestion"), 1500).trim();
-    if (text.length < 10) return interaction.reply({ content: "Please provide at least 10 characters of detail.", flags: MessageFlags.Ephemeral });
-    const id = `SUG-${String(suggestionData.nextId++).padStart(4, "0")}`;
-    const entry = { id, userId: interaction.user.id, text, status: "Pending", createdAt: Date.now(), rewarded: false };
-    suggestionData.entries[id] = entry;
-    saveJSON(SUGGESTION_FILE, suggestionData);
-    const channel = await client.channels.fetch(SUGGESTION_CHANNEL_ID).catch(() => null);
-    if (!channel?.isTextBased()) return interaction.reply({ content: "The suggestion channel is unavailable. Your suggestion was saved; please notify staff.", flags: MessageFlags.Ephemeral });
-    const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`suggestion_accept:${id}`).setLabel("Accept").setEmoji("✅").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId(`suggestion_reject:${id}`).setLabel("Reject").setEmoji("❌").setStyle(ButtonStyle.Danger)
-    );
-    const embed = new EmbedBuilder().setColor(0x5865F2).setTitle(`💡 Suggestion ${id}`).setDescription(text)
-        .addFields({ name: "Submitted by", value: `${interaction.user} (\`${interaction.user.id}\`)`, inline: true }, { name: "Status", value: "Pending", inline: true }).setTimestamp();
-    const message = await channel.send({ embeds: [embed], components: [row] });
-    entry.messageId = message.id;
-    saveJSON(SUGGESTION_FILE, suggestionData);
-    return interaction.reply({ content: `Your suggestion **${id}** was posted in <#${SUGGESTION_CHANNEL_ID}>.`, flags: MessageFlags.Ephemeral });
-}
-
-async function handleSuggestionReview(interaction) {
-    const [action, id] = interaction.customId.split(":");
-    const entry = suggestionData.entries[id];
-    if (!entry) return interaction.reply({ content: "Suggestion not found.", flags: MessageFlags.Ephemeral });
-    if (!canManageEconomy(interaction.member)) return interaction.reply({ content: "Only authorised management can review suggestions.", flags: MessageFlags.Ephemeral });
-    if (entry.status !== "Pending") return interaction.reply({ content: `This suggestion is already ${entry.status.toLowerCase()}.`, flags: MessageFlags.Ephemeral });
-    const accepted = action === "suggestion_accept";
-    entry.status = accepted ? "Accepted" : "Rejected";
-    entry.reviewedBy = interaction.user.id;
-    entry.reviewedAt = Date.now();
-    let reward = "";
-    if (accepted && !entry.rewarded) {
-        const amount = TOKEN_REWARDS.suggestion;
-        const balance = addTokens(entry.userId, amount);
-        entry.rewarded = true;
-        entry.rewardedAt = Date.now();
-        reward = ` Author awarded ${amount} tokens (balance: ${balance}).`;
-        const author = await client.users.fetch(entry.userId).catch(() => null);
-        if (author) await author.send(`Your suggestion **${id}** was accepted. You received **${amount} tokens**.`).catch(() => { });
-    }
-    saveJSON(SUGGESTION_FILE, suggestionData);
-    const embed = EmbedBuilder.from(interaction.message.embeds[0]).addFields({ name: "Decision", value: `${entry.status} by ${interaction.user}` });
-    await interaction.update({ embeds: [embed], components: [] });
-    return interaction.followUp({ content: `Suggestion ${id} ${entry.status.toLowerCase()}.${reward}`, flags: MessageFlags.Ephemeral });
-}
-
-
 // COMMAND DEFINITIONS
 // ======================================================
 
@@ -5238,22 +5197,13 @@ commands.push(
 );
 
 commands.push(
-    new SlashCommandBuilder().setName("orderreview").setDescription("Review staff after a completed order")
-        .addStringOption(o => o.setName("order_id").setDescription("Your completed order ID").setRequired(true))
-        .addIntegerOption(o => o.setName("rating").setDescription("Rate from 1 (lowest) to 10 (highest)").setRequired(true).setMinValue(1).setMaxValue(10))
-        .addStringOption(o => o.setName("comment").setDescription("Explain your rating").setRequired(true)),
-    new SlashCommandBuilder().setName("stafffeedback").setDescription("Submit general community feedback")
-        .addIntegerOption(o => o.setName("rating").setDescription("Rate from 1 (lowest) to 10 (highest)").setRequired(true).setMinValue(1).setMaxValue(10))
-        .addStringOption(o => o.setName("comment").setDescription("Share your feedback and comments").setRequired(true)),
-    new SlashCommandBuilder().setName("suggest").setDescription("Submit a community suggestion")
-        .addStringOption(o => o.setName("suggestion").setDescription("Describe your suggestion").setRequired(true)),
     new SlashCommandBuilder().setName("myorders").setDescription("View your recent orders"),
     new SlashCommandBuilder().setName("orderinfo").setDescription("View an order's information")
         .addStringOption(option => option.setName("order_id").setDescription("Order ID, e.g. AKS-0001").setRequired(true)),
     new SlashCommandBuilder().setName("ordercancel").setDescription("Request cancellation of your active order"),
     new SlashCommandBuilder().setName("orderaction").setDescription("Manage an order using a slash command")
         .addStringOption(o => o.setName("action").setDescription("Action to perform").setRequired(true).addChoices(
-            { name: "Unclaim", value: "unclaim" }, { name: "Assign HR", value: "assignhr" }, { name: "Remove HR", value: "removehr" }, { name: "Update Status", value: "status" }, { name: "Update Payment Status", value: "payment" }, { name: "Send to Quality Check", value: "qualitycheck" }, { name: "QC Accept", value: "qcaccept" }, { name: "QC Deny", value: "qcdeny" }, { name: "Request Revision", value: "revision" }, { name: "Confirm Complete", value: "complete" }, { name: "Add Staff Note", value: "note" }, { name: "Request Information", value: "requestinfo" }, { name: "Create Transcript", value: "transcript" }))
+            { name: "Unclaim", value: "unclaim" }, { name: "Assign HR", value: "assignhr" }, { name: "Remove HR", value: "removehr" }, { name: "Update Status", value: "status" }, { name: "Update Payment Status", value: "payment" }, { name: "Mark Delivered", value: "delivered" }, { name: "Request Revision", value: "revision" }, { name: "Confirm Complete", value: "complete" }, { name: "Add Staff Note", value: "note" }, { name: "Request Information", value: "requestinfo" }, { name: "Create Transcript", value: "transcript" }))
         .addStringOption(o => o.setName("order_id").setDescription("Order ID (optional inside its ticket)"))
         .addUserOption(o => o.setName("user").setDescription("HR member to assign"))
         .addStringOption(o => o.setName("value").setDescription("New stage or payment status"))
@@ -5276,7 +5226,7 @@ commands.push(
     new SlashCommandBuilder().setName("granttokens").setDescription("Grant tokens to a member")
         .addUserOption(o => o.setName("user").setDescription("Member").setRequired(true)).addIntegerOption(o => o.setName("amount").setDescription("Amount").setRequired(true).setMinValue(1)),
     new SlashCommandBuilder().setName("rewardtokens").setDescription("Approve a contribution reward")
-        .addStringOption(o => o.setName("type").setDescription("Contribution type").setRequired(true).addChoices({ name: "Verified bug report (50)", value: "bug" }, { name: "Development contribution (50)", value: "development" }))
+        .addStringOption(o => o.setName("type").setDescription("Contribution type").setRequired(true).addChoices({ name: "Verified bug report (50)", value: "bug" }, { name: "Development contribution (50)", value: "development" }, { name: "Accepted suggestion (40)", value: "suggestion" }))
         .addUserOption(o => o.setName("user").setDescription("Member receiving tokens").setRequired(true))
         .addStringOption(o => o.setName("reason").setDescription("Proof or short reason").setRequired(true))
 );
@@ -5645,6 +5595,15 @@ commands.push(
         )
 );
 
+// Reaction roles
+commands.push(
+    new SlashCommandBuilder()
+        .setName("reactionroles")
+        .setDescription(
+            "Post the reaction role panel"
+        )
+);
+
 // Giveaways
 commands.push(
     new SlashCommandBuilder()
@@ -5749,167 +5708,6 @@ async function registerCommands() {
 }
 
 // ======================================================
-// DESIGNERS AND QUALITY CONTROL DEPARTMENTS
-// ======================================================
-
-const DESIGNER_DEPARTMENT_ROLE_IDS = [
-    "1570386088021860392",
-    "1570385835285544991",
-    "1570385886909042798"
-];
-const DEPARTMENT_MANAGEMENT_ROLE_IDS = [
-    OWNER_ROLE_ID,
-    ADMIN_ROLE_ID,
-    STAFF_ROLE_ID,
-    HIGH_RANK_ROLE_ID,
-    ...SHR_ROLE_IDS
-];
-
-async function ensureDepartmentStructure(guild) {
-    // Fetch all guild roles first. PermissionOverwrites.resolve() needs each
-    // role ID to exist in the guild role cache.
-    await guild.roles.fetch();
-
-    const everyoneId = guild.roles.everyone.id;
-    const requestedManagerIds = [...new Set(DEPARTMENT_MANAGEMENT_ROLE_IDS)];
-    const requestedDesignerIds = [...new Set([
-        ...DESIGNER_DEPARTMENT_ROLE_IDS,
-        QUALITY_CHECK_HR_ROLE_ID,
-        ...requestedManagerIds
-    ])];
-    const requestedQcIds = [...new Set([
-        QUALITY_CHECK_HR_ROLE_ID,
-        ...requestedManagerIds
-    ])];
-
-    const validRoleIds = new Set(guild.roles.cache.keys());
-    const missingRoleIds = [...new Set([
-        ...requestedManagerIds,
-        ...DESIGNER_DEPARTMENT_ROLE_IDS,
-        QUALITY_CHECK_HR_ROLE_ID
-    ])].filter(id => !validRoleIds.has(id));
-
-    if (missingRoleIds.length) {
-        console.warn(
-            "⚠️ Department setup: these configured role IDs were not found in this server and will be skipped:",
-            missingRoleIds.join(", ")
-        );
-    }
-
-    const managerIds = requestedManagerIds.filter(id => validRoleIds.has(id));
-    const designerIds = requestedDesignerIds.filter(id => validRoleIds.has(id));
-    const qcIds = requestedQcIds.filter(id => validRoleIds.has(id));
-
-    function makeOverwrites(roleIds, postingRoleIds = []) {
-        const overwriteMap = new Map();
-
-        overwriteMap.set(everyoneId, {
-            id: everyoneId,
-            deny: [PermissionFlagsBits.ViewChannel]
-        });
-
-        for (const roleId of roleIds) {
-            overwriteMap.set(roleId, {
-                id: roleId,
-                allow: [
-                    PermissionFlagsBits.ViewChannel,
-                    PermissionFlagsBits.ReadMessageHistory
-                ]
-            });
-        }
-
-        for (const roleId of postingRoleIds) {
-            overwriteMap.set(roleId, {
-                id: roleId,
-                allow: [
-                    PermissionFlagsBits.ViewChannel,
-                    PermissionFlagsBits.ReadMessageHistory,
-                    PermissionFlagsBits.SendMessages,
-                    PermissionFlagsBits.AttachFiles,
-                    PermissionFlagsBits.EmbedLinks
-                ]
-            });
-        }
-
-        return [...overwriteMap.values()];
-    }
-
-    async function ensureCategory(name, roleIds) {
-        let category = guild.channels.cache.find(
-            channel =>
-                channel.type === ChannelType.GuildCategory &&
-                channel.name === name
-        );
-
-        const permissionOverwrites = makeOverwrites(roleIds);
-
-        if (!category) {
-            category = await guild.channels.create({
-                name,
-                type: ChannelType.GuildCategory,
-                permissionOverwrites,
-                reason: "Set up department channels"
-            });
-        } else {
-            await category.permissionOverwrites.set(
-                permissionOverwrites,
-                "Sync department category permissions"
-            );
-        }
-
-        return category;
-    }
-
-    async function ensureTextChannel(category, name, roleIds, readOnly = false) {
-        const canPostIds = readOnly ? managerIds : roleIds;
-        const permissionOverwrites = makeOverwrites(roleIds, canPostIds);
-
-        let channel = guild.channels.cache.find(
-            existing =>
-                existing.type === ChannelType.GuildText &&
-                existing.name === name
-        );
-
-        if (!channel) {
-            channel = await guild.channels.create({
-                name,
-                type: ChannelType.GuildText,
-                parent: category.id,
-                permissionOverwrites,
-                reason: "Set up department channels"
-            });
-        } else {
-            await channel.setParent(category.id, {
-                lockPermissions: false,
-                reason: "Organise department channels"
-            });
-            await channel.permissionOverwrites.set(
-                permissionOverwrites,
-                "Sync department channel permissions"
-            );
-        }
-
-        return channel;
-    }
-
-    const designers = await ensureCategory("🎨・Designers", designerIds);
-    await ensureTextChannel(designers, "💬・design-chat", designerIds);
-    await ensureTextChannel(designers, "🖼️・showcase", designerIds);
-    await ensureTextChannel(designers, "📦・design-orders", designerIds);
-    await ensureTextChannel(designers, "📢・announcements", designerIds, true);
-    await ensureTextChannel(designers, "💡・ideas", designerIds);
-
-    const qc = await ensureCategory("🛡️・Quality Control", qcIds);
-    await ensureTextChannel(qc, "💬・qc-chat", qcIds);
-    await ensureTextChannel(qc, "📋・order-logs", qcIds);
-    await ensureTextChannel(qc, "🔍・order-reviews", qcIds);
-    await ensureTextChannel(qc, "❌・rejected-orders", qcIds);
-    await ensureTextChannel(qc, "✅・approved-orders", qcIds);
-
-    console.log("✅ Designers and Quality Control departments are ready.");
-}
-
-// ======================================================
 // READY
 // ======================================================
 
@@ -5945,11 +5743,6 @@ client.once(
 
         if (guild) {
             await cacheGuildInvites(guild);
-            try {
-                await ensureDepartmentStructure(guild);
-            } catch (error) {
-                console.error("❌ Department channel setup failed:", error);
-            }
         }
 
         // Automatic ticket panel
@@ -5975,6 +5768,9 @@ client.once(
         await showApplicationPanel();
         await ensureTimezoneRoles(guild);
         await showTimezonePanel();
+
+        // Existing reaction-role panel
+        await setupReactionRoles();
 
         // Recover giveaways
         for (const giveaway of Object.values(
@@ -6017,17 +5813,93 @@ client.once(
     }
 );
 
-// Reactions count as community participation; cooldowns prevent farming.
-client.on("messageReactionAdd", async (reaction, user) => {
-    if (user.bot) return;
-    if (reaction.partial) {
-        try { await reaction.fetch(); } catch { return; }
+// ======================================================
+// REACTION ROLE EVENTS
+// ======================================================
+
+client.on(
+    "messageReactionAdd",
+    async (reaction, user) => {
+        if (user.bot) return;
+
+        if (reaction.partial) {
+            try {
+                await reaction.fetch();
+            } catch {
+                return;
+            }
+        }
+
+        if (
+            reaction.message.id !==
+            reactionRoles.messageId
+        ) return;
+
+        const roleId =
+            reactionRoles.roles[
+            reaction.emoji.name
+            ];
+
+        if (!roleId) return;
+
+        const guild =
+            reaction.message.guild;
+
+        const member =
+            await guild.members.fetch(
+                user.id
+            ).catch(() => null);
+
+        if (!member) return;
+
+        await member.roles.add(
+            roleId,
+            "Reaction role"
+        ).catch(() => { });
     }
-    const guild = reaction.message.guild;
-    if (!guild) return;
-    const member = await guild.members.fetch(user.id).catch(() => null);
-    if (member) await recordCommunityActivity(member, "participation").catch(error => console.error("Participation tracking error:", error));
-});
+);
+
+client.on(
+    "messageReactionRemove",
+    async (reaction, user) => {
+        if (user.bot) return;
+
+        if (reaction.partial) {
+            try {
+                await reaction.fetch();
+            } catch {
+                return;
+            }
+        }
+
+        if (
+            reaction.message.id !==
+            reactionRoles.messageId
+        ) return;
+
+        const roleId =
+            reactionRoles.roles[
+            reaction.emoji.name
+            ];
+
+        if (!roleId) return;
+
+        const guild =
+            reaction.message.guild;
+
+        const member =
+            await guild.members.fetch(
+                user.id
+            ).catch(() => null);
+
+        if (!member) return;
+
+        await member.roles.remove(
+            roleId,
+            "Reaction role removed"
+        ).catch(() => { });
+    }
+);
 
 // ======================================================
 // INTERACTION HANDLER
@@ -6075,9 +5947,6 @@ client.on(
                     case "grantcoins": return economyGrant(interaction, "coins");
                     case "granttokens": return economyGrant(interaction, "tokens");
                     case "rewardtokens": return economyReward(interaction);
-                    case "orderreview": return submitOrderReview(interaction);
-                    case "stafffeedback": return submitGeneralFeedback(interaction);
-                    case "suggest": return submitSuggestion(interaction);
 
                     case "promote":
                         return promoteMember(
@@ -6251,6 +6120,11 @@ client.on(
                             interaction
                         );
 
+                    case "reactionroles":
+                        return createReactionRolePanel(
+                            interaction
+                        );
+
                     case "giveaway": {
                         const sub =
                             interaction.options.getSubcommand();
@@ -6301,7 +6175,6 @@ client.on(
             // ==================================================
 
             if (interaction.isButton()) {
-                if (interaction.customId.startsWith("suggestion_accept:") || interaction.customId.startsWith("suggestion_reject:")) return handleSuggestionReview(interaction);
                 if (interaction.customId.startsWith("application_approve:") || interaction.customId.startsWith("application_reject:")) return handleApplicationReview(interaction);
                 if (interaction.customId.startsWith("app_dm_start:")) {
                     const [, type, ownerId] = interaction.customId.split(":");
